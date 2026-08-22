@@ -110,38 +110,65 @@ def _card(title, value):
 @app.route("/details")
 def index():
     items = _store.all() if _store else {}
-    by_stack = {}
-    for key, it in items.items():
-        by_stack.setdefault(it.get("stack", "?"), []).append((key, it))
 
-    sections = []
-    for stack in sorted(by_stack):
-        cards = []
-        for key, it in sorted(by_stack[stack], key=lambda x: x[1].get("name", "")):
-            h, v = it.get("health"), it.get("verdict")
-            status = _status(v, h)
-            mem = _bytes(h.mem_used) if h else "n/a"
-            cpu = f"{h.cpu_percent}%" if h and h.cpu_percent is not None else "n/a"
-            cards.append(
-                f'<a href="/details/{_e(key)}" class="block rounded-lg border bg-card text-card-foreground '
-                'shadow-sm p-4 transition hover:shadow-lg hover:scale-[1.01] dark:hover:border-gray-700">'
-                '<div class="flex items-start justify-between gap-2">'
-                f'<div class="min-w-0"><div class="font-semibold truncate">{_e(it.get("name"))}</div>'
-                f'<div class="text-xs text-muted-foreground">cpu {cpu} · mem {mem}</div></div>'
-                f'{_badge(status)}</div></a>'
-            )
-        sections.append(
-            f'<div class="mb-8"><h2 class="text-lg font-semibold mb-3 text-muted-foreground">{_e(stack)}</h2>'
-            f'<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{"".join(cards)}</div></div>'
+    cards = []
+    groups = set()
+    for key, it in items.items():
+        h, v = it.get("health"), it.get("verdict")
+        status = _status(v, h)
+        stack = it.get("stack", "?")
+        groups.add(stack)
+        mem_bytes = int(h.mem_used) if (h and h.mem_used is not None) else -1
+        cpu_val = float(h.cpu_percent) if (h and h.cpu_percent is not None) else -1
+        mem_txt = _bytes(h.mem_used) if h else "n/a"
+        cpu_txt = f"{h.cpu_percent}%" if h and h.cpu_percent is not None else "n/a"
+        cards.append(
+            f'<a href="/details/{_e(key)}" class="ag-card block rounded-lg border bg-card text-card-foreground '
+            'shadow-sm p-4 transition hover:shadow-lg hover:scale-[1.01] dark:hover:border-gray-700" '
+            f'data-name="{_e((it.get("name") or "").lower())}" data-group="{_e(stack)}" '
+            f'data-status="{status}" data-mem="{mem_bytes}" data-cpu="{cpu_val}">'
+            '<div class="flex items-start justify-between gap-2">'
+            f'<div class="min-w-0"><div class="font-semibold truncate">{_e(it.get("name"))}</div>'
+            f'<div class="text-xs text-muted-foreground truncate">{_e(stack)}</div>'
+            f'<div class="text-xs text-muted-foreground mt-1">cpu {cpu_txt} · mem {mem_txt}</div></div>'
+            f'{_badge(status)}</div></a>'
         )
+
+    sel = "text-sm bg-background border rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-ring"
+    group_opts = '<option value="all">All groups</option>' + "".join(
+        f'<option value="{_e(g)}">{_e(g)}</option>' for g in sorted(groups)
+    )
+    controls = f"""
+    <div class="rounded-lg border bg-card text-card-foreground shadow-sm p-4 mb-6">
+      <div class="flex flex-wrap items-center gap-3">
+        <input id="ag-q" type="text" placeholder="Search name..." class="{sel} flex-1 min-w-[10rem]"/>
+        <select id="ag-group" class="{sel}">{group_opts}</select>
+        <select id="ag-status" class="{sel}">
+          <option value="all">All statuses</option>
+          <option value="healthy">Healthy</option>
+          <option value="unhealthy">Unhealthy</option>
+        </select>
+        <select id="ag-sort" class="{sel}">
+          <option value="name">Sort: Name</option>
+          <option value="group">Sort: Group</option>
+          <option value="mem">Sort: Memory</option>
+          <option value="cpu">Sort: CPU</option>
+          <option value="status">Sort: Status</option>
+        </select>
+        <button id="ag-order" class="{sel} font-medium" title="Toggle sort order">↑ Asc</button>
+      </div>
+    </div>"""
 
     header = (
         '<div class="mb-6"><a href="/" class="inline-flex items-center text-sm text-muted-foreground '
         'hover:text-foreground mb-4">&larr; Back to Dashboard</a>'
         '<h1 class="text-4xl font-bold tracking-tight">Container Details</h1>'
-        f'<p class="text-muted-foreground mt-2">{len(items)} containers monitored</p></div>'
+        f'<p class="text-muted-foreground mt-2"><span id="ag-count">{len(items)}</span> of '
+        f'{len(items)} containers</p></div>'
     )
-    return _page("Container Details", header + "".join(sections))
+    grid = f'<div id="ag-grid" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{"".join(cards)}</div>'
+    empty = '<p id="ag-empty" class="text-muted-foreground text-center py-12" style="display:none">No containers match.</p>'
+    return _page("Container Details", header + controls + grid + empty + _INDEX_JS)
 
 
 @app.route("/details/<key>")
@@ -215,3 +242,83 @@ def detail(key):
 @app.route("/details/health")
 def health():
     return {"ok": True, "containers": len(_store.all()) if _store else 0}
+
+
+# Client-side filter/sort for the index. All cards are already in the DOM, so
+# this is instant and needs no round-trips. Choices persist in localStorage.
+_INDEX_JS = """
+<script>
+(function () {
+  var grid = document.getElementById('ag-grid');
+  if (!grid) return;
+  var cards = Array.prototype.slice.call(grid.querySelectorAll('.ag-card'));
+  var q = document.getElementById('ag-q');
+  var fGroup = document.getElementById('ag-group');
+  var fStatus = document.getElementById('ag-status');
+  var sortBy = document.getElementById('ag-sort');
+  var orderBtn = document.getElementById('ag-order');
+  var count = document.getElementById('ag-count');
+  var empty = document.getElementById('ag-empty');
+  var order = 'asc';
+
+  function load() {
+    try {
+      var s = JSON.parse(localStorage.getItem('autogatus.filters') || '{}');
+      if (s.q) q.value = s.q;
+      if (s.group) fGroup.value = s.group;
+      if (s.status) fStatus.value = s.status;
+      if (s.sort) sortBy.value = s.sort;
+      if (s.order) order = s.order;
+    } catch (e) {}
+    orderBtn.textContent = order === 'asc' ? '\\u2191 Asc' : '\\u2193 Desc';
+  }
+  function save() {
+    try {
+      localStorage.setItem('autogatus.filters', JSON.stringify({
+        q: q.value, group: fGroup.value, status: fStatus.value,
+        sort: sortBy.value, order: order
+      }));
+    } catch (e) {}
+  }
+
+  function apply() {
+    var term = q.value.trim().toLowerCase();
+    var g = fGroup.value, st = fStatus.value, key = sortBy.value;
+    var visible = cards.filter(function (c) {
+      if (term && c.dataset.name.indexOf(term) === -1) return false;
+      if (g !== 'all' && c.dataset.group !== g) return false;
+      if (st !== 'all' && c.dataset.status !== st) return false;
+      return true;
+    });
+    visible.sort(function (a, b) {
+      var av, bv;
+      if (key === 'mem' || key === 'cpu') {
+        av = parseFloat(a.dataset[key]); bv = parseFloat(b.dataset[key]);
+      } else {
+        av = a.dataset[key] || ''; bv = b.dataset[key] || '';
+      }
+      var cmp = av < bv ? -1 : (av > bv ? 1 : 0);
+      return order === 'asc' ? cmp : -cmp;
+    });
+    cards.forEach(function (c) { c.style.display = 'none'; });
+    visible.forEach(function (c) { c.style.display = ''; grid.appendChild(c); });
+    if (count) count.textContent = visible.length;
+    if (empty) empty.style.display = visible.length ? 'none' : '';
+    save();
+  }
+
+  q.addEventListener('input', apply);
+  fGroup.addEventListener('change', apply);
+  fStatus.addEventListener('change', apply);
+  sortBy.addEventListener('change', apply);
+  orderBtn.addEventListener('click', function () {
+    order = order === 'asc' ? 'desc' : 'asc';
+    orderBtn.textContent = order === 'asc' ? '\\u2191 Asc' : '\\u2193 Desc';
+    apply();
+  });
+
+  load();
+  apply();
+})();
+</script>
+"""

@@ -125,7 +125,8 @@ everything it monitors, styled to match Gatus by loading Gatus's own stylesheet.
 Serve it on the same host under `/details` (path-prefix route to autogatus) so it
 sits behind the same auth and mirrors Gatus's URLs:
 
-- `/details` — every container, grouped by stack
+- `/details` — every container, with client-side search, filter (by group / health)
+  and sort (name / group / memory / CPU / status); choices persist in localStorage
 - `/details/<key>` — one container (mirrors Gatus's `/endpoints/<key>`), with CPU,
   memory, network, block I/O, restarts, health, uptime, and status history
 
