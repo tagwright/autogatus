@@ -143,6 +143,8 @@ a `ui.buttons` entry pointing at `/details`.
 | `AUTOGATUS_DEFAULT_GROUP` | *(empty)* | Fallback group; empty means "group by container name" |
 | `AUTOGATUS_RESYNC_INTERVAL` | `15` | Seconds between reconciles / event backstop |
 | `AUTOGATUS_LOG_LEVEL` | `INFO` | `DEBUG` for per-container detail |
+| `AUTOGATUS_LOG_FORMAT` | `text` | `text` (human) or `json` (one object per line, for aggregators) |
+| `AUTOGATUS_ACCESS_LOG_LEVEL` | `INFO` | Level for `/details` request logs; `OFF` to suppress |
 | `AUTOGATUS_MONITOR_CONTAINERS` | `false` | Enable container monitoring (Tier 2) |
 | `AUTOGATUS_GATUS_URL` | `http://gatus:8080` | Gatus base URL for pushes |
 | `AUTOGATUS_PUSH_TOKEN` | *(generated)* | Bearer token; auto-generated and persisted if unset |
@@ -166,6 +168,31 @@ a `ui.buttons` entry pointing at `/details`.
   reads a half-written config.
 - **One bad label doesn't break the world.** A container with a malformed endpoint is
   logged and skipped; the rest still reconcile.
+
+## Logging
+
+One shared `autogatus` logger, two formats via `AUTOGATUS_LOG_FORMAT`:
+
+- **text** (default): `2026-01-01T00:00:00.000+00:00 autogatus INFO message`
+- **json**: one JSON object per line with `timestamp`, `level`, `logger`, `message`,
+  plus any structured extras (e.g. `http_method`, `http_status`, `duration_ms` on
+  access logs). Point it at any log aggregator.
+
+Both honor `AUTOGATUS_LOG_LEVEL`. Third-party libraries stay at WARNING so they do
+not drown out autogatus output.
+
+A healthy INFO run is quiet: a per-cycle summary (`reconcile: N monitored, P pushed,
+F failed`) is logged only when the generated config changes or a push fails; otherwise
+the cycle detail stays at DEBUG. Per-container detail is DEBUG throughout.
+
+The `/details` web view logs each request (method, path, status, duration) through the
+same logger and format. Set `AUTOGATUS_ACCESS_LOG_LEVEL=OFF` to silence it.
+
+**Secret hygiene.** The push token is registered as a redacted value, so it is replaced
+with `***REDACTED***` in every log line, in either format, even if it reaches a message.
+
+When running under Docker, cap log growth with a `logging:` block on the service
+(json-file, `max-size`, `max-file`); the example compose does this.
 
 ## Prior art
 

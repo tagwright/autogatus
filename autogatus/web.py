@@ -9,17 +9,52 @@ same domain, so it sits behind the same Authentik middleware.
 from __future__ import annotations
 
 import html
+import logging
+import time
 
-from flask import Flask, abort
+from flask import Flask, abort, g, request
 
 app = Flask(__name__)
 _store = None
+logger = logging.getLogger("autogatus")
+
+# Resolved access-log level; None disables access logging.
+_access_level = logging.INFO
 
 
-def init(store):
-    global _store
+def init(store, access_log_level="INFO"):
+    global _store, _access_level
     _store = store
+    if str(access_log_level).upper() in ("OFF", "NONE", "FALSE", "DISABLED", ""):
+        _access_level = None
+    else:
+        _access_level = getattr(logging, str(access_log_level).upper(), logging.INFO)
     return app
+
+
+@app.before_request
+def _access_start():
+    g._ag_start = time.monotonic()
+
+
+@app.after_request
+def _access_log(response):
+    if _access_level is None:
+        return response
+    started = getattr(g, "_ag_start", None)
+    duration_ms = round((time.monotonic() - started) * 1000, 1) if started else 0.0
+    logger.log(
+        _access_level,
+        "access %s %s -> %s %.1fms",
+        request.method, request.path, response.status_code, duration_ms,
+        extra={
+            "http_method": request.method,
+            "http_path": request.path,
+            "http_status": response.status_code,
+            "duration_ms": duration_ms,
+        },
+    )
+    return response
 
 
 # ── formatting helpers ────────────────────────────────────────────────────────

@@ -24,6 +24,7 @@ import time
 import docker
 
 from .health import Thresholds
+from .logging_setup import register_secret, setup_logging
 from .monitor import ContainerMonitor
 from .push import GatusPusher
 from .reconcile import Writer, gather_endpoints
@@ -51,6 +52,8 @@ OUTPUT_PATH = os.environ.get("AUTOGATUS_OUTPUT", "/output/autogatus.yaml")
 DEFAULT_GROUP = os.environ.get("AUTOGATUS_DEFAULT_GROUP", "")
 INTERVAL = int(os.environ.get("AUTOGATUS_RESYNC_INTERVAL", "15"))
 LOG_LEVEL = os.environ.get("AUTOGATUS_LOG_LEVEL", "INFO").upper()
+LOG_FORMAT = os.environ.get("AUTOGATUS_LOG_FORMAT", "text").lower()
+ACCESS_LOG_LEVEL = os.environ.get("AUTOGATUS_ACCESS_LOG_LEVEL", "INFO").upper()
 
 MONITOR = _bool("AUTOGATUS_MONITOR_CONTAINERS", False)
 GATUS_URL = os.environ.get("AUTOGATUS_GATUS_URL", "http://gatus:8080")
@@ -78,7 +81,7 @@ def _start_web(store) -> None:
     from waitress import serve
 
     from .web import init
-    app = init(store)
+    app = init(store, access_log_level=ACCESS_LOG_LEVEL)
 
     def _serve():
         logger.info("serving container detail view on :%s (/details)", WEB_PORT)
@@ -114,10 +117,7 @@ def _acquire_token() -> str:
 
 
 def run() -> int:
-    logging.basicConfig(
-        level=getattr(logging, LOG_LEVEL, logging.INFO),
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    )
+    setup_logging(level=LOG_LEVEL, fmt=LOG_FORMAT)
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
@@ -133,6 +133,7 @@ def run() -> int:
     if MONITOR:
         store = Store()
         token = _acquire_token()
+        register_secret(token)
         if WEB:
             _start_web(store)
         logger.info(
@@ -188,11 +189,21 @@ def _tick(client, writer: Writer, monitor) -> None:
         declarations, verdicts = monitor.reconcile()
 
     # Write declarations first so Gatus loads them before we push their statuses.
-    writer.reconcile(endpoints, external_endpoints=declarations)
+    wrote = writer.reconcile(endpoints, external_endpoints=declarations)
 
     if monitor is not None:
         pushed = monitor.push_all(verdicts)
-        logger.debug("pushed %d/%d container statuses", pushed, len(verdicts))
+        total = len(verdicts)
+        failed = total - pushed
+        # Keep a healthy INFO run quiet: only surface a summary when the config
+        # changed or a push failed. Steady-state cycles stay at DEBUG.
+        if wrote or failed:
+            logger.info(
+                "reconcile: %d monitored, %d pushed, %d failed%s",
+                total, pushed, failed, ", config written" if wrote else "",
+            )
+        else:
+            logger.debug("reconcile: %d monitored, %d pushed (no change)", total, pushed)
 
 
 if __name__ == "__main__":
