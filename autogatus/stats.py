@@ -53,3 +53,31 @@ def memory(stats: dict):
     if limit <= 0:
         return (used, limit, None)
     return (used, limit, round(used / limit * 100.0, 1))
+
+
+def network(stats: dict):
+    """Total (rx_bytes, tx_bytes) summed across interfaces, or None."""
+    nets = stats.get("networks")
+    if not nets:
+        return None
+    rx = tx = 0
+    for iface in nets.values():
+        rx += iface.get("rx_bytes", 0)
+        tx += iface.get("tx_bytes", 0)
+    return (rx, tx)
+
+
+def block_io(stats: dict):
+    """Total (read_bytes, write_bytes) from blkio stats, or None."""
+    blk = stats.get("blkio_stats", {}) or {}
+    entries = blk.get("io_service_bytes_recursive")
+    if not entries:
+        return None
+    read = write = 0
+    for e in entries:
+        op = (e.get("op") or "").lower()
+        if op == "read":
+            read += e.get("value", 0)
+        elif op == "write":
+            write += e.get("value", 0)
+    return (read, write)

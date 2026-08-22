@@ -118,6 +118,22 @@ Exclude noise with `AUTOGATUS_EXCLUDE` (default `autogatus,claude-code`).
 > autogatus already collects. That exporter is a planned addition; Gatus stays the
 > status layer.
 
+## Detail view (Gatus-styled)
+
+With `AUTOGATUS_WEB=true` (default), autogatus serves a read-only detail view of
+everything it monitors, styled to match Gatus by loading Gatus's own stylesheet.
+Serve it on the same host under `/details` (path-prefix route to autogatus) so it
+sits behind the same auth and mirrors Gatus's URLs:
+
+- `/details` — every container, grouped by stack
+- `/details/<key>` — one container (mirrors Gatus's `/endpoints/<key>`), with CPU,
+  memory, network, block I/O, restarts, health, uptime, and status history
+
+It reuses Gatus's live `/css/app.css`, so the theme tracks Gatus across versions.
+A structural redesign of Gatus's own components would need the markup refreshed;
+color/theme changes track automatically. Add a link from the Gatus dashboard with
+a `ui.buttons` entry pointing at `/details`.
+
 ## Configuration
 
 | Env | Default | Meaning |
@@ -135,6 +151,8 @@ Exclude noise with `AUTOGATUS_EXCLUDE` (default `autogatus,claude-code`).
 | `AUTOGATUS_MEM_THRESHOLD` | `95` | Fail over this % of memory limit (blank/`none` disables) |
 | `AUTOGATUS_CPU_THRESHOLD` | *(disabled)* | Fail over this CPU % if set |
 | `AUTOGATUS_EXCLUDE` | `autogatus,claude-code` | Comma-separated name substrings to skip |
+| `AUTOGATUS_WEB` | `true` | Serve the `/details` detail view |
+| `AUTOGATUS_WEB_PORT` | `8080` | Port for the detail view |
 
 ## Design notes
 

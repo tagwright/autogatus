@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from .collector import collect_health
@@ -48,6 +49,7 @@ class ContainerMonitor:
         heartbeat_interval: str = "90s",
         default_group: str = "",
         max_workers: int = 16,
+        store=None,
     ):
         self.client = client
         self.pusher = pusher
@@ -59,6 +61,7 @@ class ContainerMonitor:
         self.heartbeat_interval = heartbeat_interval
         self.default_group = default_group
         self.max_workers = max_workers
+        self.store = store
         self._seen_running = set()
         self._prev_restart = {}
 
@@ -111,6 +114,7 @@ class ContainerMonitor:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 healths = list(pool.map(_collect, worklist))
 
+        ts = time.time()
         declarations = []
         verdicts = []
         for c, stack, health in healths:
@@ -131,6 +135,11 @@ class ContainerMonitor:
                 "alerts": [{"type": "custom", "description": f"{name} ({stack})"}],
             })
             verdicts.append((key, verdict))
+            if self.store is not None:
+                self.store.update(key, stack, name, health, verdict, ts)
+
+        if self.store is not None:
+            self.store.prune({k for k, _ in verdicts})
 
         # Forget containers that no longer exist at all.
         self._seen_running &= present

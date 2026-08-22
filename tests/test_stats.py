@@ -53,3 +53,20 @@ def test_memory_no_limit_returns_none_percent():
 
 def test_memory_missing():
     assert memory({}) is None
+
+
+def test_network_totals():
+    from autogatus.stats import network
+    s = {"networks": {"eth0": {"rx_bytes": 100, "tx_bytes": 200},
+                        "eth1": {"rx_bytes": 50, "tx_bytes": 5}}}
+    assert network(s) == (150, 205)
+    assert network({}) is None
+
+
+def test_block_io_totals():
+    from autogatus.stats import block_io
+    s = {"blkio_stats": {"io_service_bytes_recursive": [
+        {"op": "Read", "value": 1000}, {"op": "Write", "value": 500},
+        {"op": "Read", "value": 200}]}}
+    assert block_io(s) == (1200, 500)
+    assert block_io({}) is None

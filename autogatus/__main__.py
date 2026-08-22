@@ -18,6 +18,7 @@ import os
 import secrets
 import signal
 import sys
+import threading
 import time
 
 import docker
@@ -27,6 +28,7 @@ from .monitor import ContainerMonitor
 from .push import GatusPusher
 from .reconcile import Writer, gather_endpoints
 from .stackmap import load_stack_map
+from .store import Store
 
 logger = logging.getLogger("autogatus")
 
@@ -56,6 +58,8 @@ PUSH_TOKEN = os.environ.get("AUTOGATUS_PUSH_TOKEN", "").strip()
 STACK_MAP_PATH = os.environ.get("AUTOGATUS_STACK_MAP", "")
 HEADLINE_METRIC = os.environ.get("AUTOGATUS_HEADLINE_METRIC", "mem_used_mb")
 HEARTBEAT_INTERVAL = os.environ.get("AUTOGATUS_HEARTBEAT_INTERVAL", "90s")
+WEB = _bool("AUTOGATUS_WEB", True)
+WEB_PORT = int(os.environ.get("AUTOGATUS_WEB_PORT", "8080"))
 EXCLUDES = [x.strip() for x in os.environ.get(
     "AUTOGATUS_EXCLUDE", "autogatus,claude-code").split(",") if x.strip()]
 MEM_THRESHOLD = _float_or_none("AUTOGATUS_MEM_THRESHOLD") if "AUTOGATUS_MEM_THRESHOLD" in os.environ else 95.0
@@ -68,6 +72,19 @@ def _handle_signal(signum, _frame):
     global _running
     logger.info("received signal %s, shutting down", signum)
     _running = False
+
+
+def _start_web(store) -> None:
+    from waitress import serve
+
+    from .web import init
+    app = init(store)
+
+    def _serve():
+        logger.info("serving container detail view on :%s (/details)", WEB_PORT)
+        serve(app, host="0.0.0.0", port=WEB_PORT, _quiet=True)
+
+    threading.Thread(target=_serve, daemon=True, name="web").start()
 
 
 def _acquire_token() -> str:
@@ -111,9 +128,13 @@ def run() -> int:
 
     writer = Writer(OUTPUT_PATH)
 
+    store = None
     monitor = None
     if MONITOR:
+        store = Store()
         token = _acquire_token()
+        if WEB:
+            _start_web(store)
         logger.info(
             "container monitoring on: gatus=%s thresholds(mem=%s,cpu=%s) headline=%s excludes=%s",
             GATUS_URL, MEM_THRESHOLD, CPU_THRESHOLD, HEADLINE_METRIC, EXCLUDES,
@@ -140,6 +161,7 @@ def run() -> int:
                 headline_metric=HEADLINE_METRIC,
                 heartbeat_interval=HEARTBEAT_INTERVAL,
                 default_group=DEFAULT_GROUP,
+                store=store,
             )
 
         try:

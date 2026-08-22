@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 
 from .health import ContainerHealth
-from .stats import cpu_percent, memory
+from .stats import block_io, cpu_percent, memory, network
 
 logger = logging.getLogger("autogatus")
 
@@ -68,6 +68,12 @@ def collect_health(container, stack: str, with_stats: bool = True) -> ContainerH
             mem = memory(s)
             if mem:
                 h.mem_used, h.mem_limit, h.mem_percent = mem
+            net = network(s)
+            if net:
+                h.net_rx, h.net_tx = net
+            blk = block_io(s)
+            if blk:
+                h.blk_read, h.blk_write = blk
         except Exception as e:
             logger.debug("stats unavailable for %s: %s", container.name, e)
 

@@ -38,6 +38,10 @@ class ContainerHealth:
     mem_limit: Optional[float] = None
     mem_percent: Optional[float] = None
     uptime_seconds: Optional[int] = None
+    net_rx: Optional[float] = None
+    net_tx: Optional[float] = None
+    blk_read: Optional[float] = None
+    blk_write: Optional[float] = None
 
     @property
     def mem_used_mb(self) -> Optional[float]:
