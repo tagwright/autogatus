@@ -27,9 +27,16 @@ services:
       # Container monitoring (opt-in): monitor every container by pushing to Gatus
       # AUTOGATUS_MONITOR_CONTAINERS: "true"
       # AUTOGATUS_GATUS_URL: http://gatus:8080
+      # Alert routing: derive the allowlist from Gatus's configured providers, so a
+      # label picking an unconfigured provider is dropped with a warning, not fired
+      # into the void. The provider itself must be configured in Gatus's alerting:
+      # section; labels only pick which configured providers fire.
+      # AUTOGATUS_GATUS_CONFIG: /gatus-config   # path to Gatus config (file or dir)
+      # AUTOGATUS_ALERT_TYPES: custom           # default channels; unset -> custom
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro   # read-only socket
       - gatus-generated:/output
+      # - ./config:/gatus-config:ro            # so autogatus can read alerting: keys
     logging:
       driver: json-file
       options:
@@ -44,6 +51,7 @@ services:
       gatus.web.url: "http://whoami/"
       gatus.web.conditions.0: "[STATUS] == 200"
       gatus.web.conditions.1: "[RESPONSE_TIME] < 300"
+      gatus.web.alerts: "custom"     # fire these Gatus providers (must be configured in Gatus)
 
 volumes:
   gatus-generated:
