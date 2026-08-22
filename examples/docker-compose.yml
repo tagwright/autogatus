@@ -1,0 +1,37 @@
+# Example: run autogatus alongside Gatus, sharing a volume for the generated
+# config. Gatus reads /config (its base) plus /config/generated (autogatus
+# output); it merges every *.yaml it finds and hot-reloads on change.
+
+services:
+  gatus:
+    image: ghcr.io/twin/gatus:stable
+    environment:
+      GATUS_CONFIG_PATH: /config     # a directory: base + generated are merged
+    volumes:
+      - ./config:/config:ro                    # your hand-written base config
+      - gatus-generated:/config/generated:ro   # autogatus writes here
+    ports:
+      - "8080:8080"
+
+  autogatus:
+    image: ghcr.io/techgaud/autogatus:latest   # or build: ..
+    restart: unless-stopped
+    environment:
+      AUTOGATUS_OUTPUT: /output/autogatus.yaml
+      AUTOGATUS_DEFAULT_GROUP: ""              # empty = group by container name
+      AUTOGATUS_RESYNC_INTERVAL: "15"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # read-only socket
+      - gatus-generated:/output
+
+  # A monitored service just wears labels — no central config edit:
+  whoami:
+    image: traefik/whoami
+    labels:
+      gatus.enable: "true"
+      gatus.web.url: "http://whoami/"
+      gatus.web.conditions.0: "[STATUS] == 200"
+      gatus.web.conditions.1: "[RESPONSE_TIME] < 300"
+
+volumes:
+  gatus-generated:
