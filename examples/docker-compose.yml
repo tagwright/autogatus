@@ -20,11 +20,23 @@ services:
       AUTOGATUS_OUTPUT: /output/autogatus.yaml
       AUTOGATUS_DEFAULT_GROUP: ""              # empty = group by container name
       AUTOGATUS_RESYNC_INTERVAL: "15"
+      # Logging
+      AUTOGATUS_LOG_FORMAT: text               # text (human) or json (aggregators)
+      AUTOGATUS_LOG_LEVEL: INFO                 # DEBUG for per-container detail
+      AUTOGATUS_ACCESS_LOG_LEVEL: INFO          # /details request logs; OFF to suppress
+      # Container monitoring (opt-in): monitor every container by pushing to Gatus
+      # AUTOGATUS_MONITOR_CONTAINERS: "true"
+      # AUTOGATUS_GATUS_URL: http://gatus:8080
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro   # read-only socket
       - gatus-generated:/output
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # A monitored service just wears labels — no central config edit:
+  # A monitored service just wears labels, no central config edit:
   whoami:
     image: traefik/whoami
     labels:
