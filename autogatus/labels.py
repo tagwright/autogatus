@@ -16,6 +16,7 @@ Label schema (Traefik/Autokuma shaped, opt-in):
     gatus.<id>.body=...                       # optional (http)
     gatus.<id>.headers.X-Api-Key=...          # optional (http), repeatable
     gatus.<id>.alert=true                     # default: true -> attaches a custom alert
+    gatus.<id>.alerts=custom,ntfy             # list of Gatus providers (wins over .alert)
     gatus.<id>.alert-description=...           # default: "<name> is down"
 
 One container may declare many endpoints by using different ``<id>`` segments.
@@ -24,6 +25,8 @@ One container may declare many endpoints by using different ``<id>`` segments.
 from __future__ import annotations
 
 import re
+
+from .alerts import build_alerts, parse_type_list
 
 ENABLE_KEY = "gatus.enable"
 PREFIX = "gatus."
@@ -130,10 +133,17 @@ def parse_container(labels: dict, container_name: str, default_group: str = "") 
         if headers:
             endpoint["headers"] = headers
 
-        alert = str(fields.get("alert", "true")).strip().lower() in _TRUE
-        if alert:
+        # Alert channels: `gatus.<id>.alerts=custom,ntfy` (list of provider
+        # types) wins if present; otherwise the legacy `gatus.<id>.alert` bool
+        # (true/absent -> custom, false -> none). These are the REQUESTED types;
+        # they are filtered against Gatus's configured providers downstream.
+        requested = parse_type_list(fields.get("alerts"))
+        if requested is None:
+            alert = str(fields.get("alert", "true")).strip().lower() in _TRUE
+            requested = ["custom"] if alert else []
+        if requested:
             description = fields.get("alert-description", "").strip() or f"{name} is down"
-            endpoint["alerts"] = [{"type": "custom", "description": description}]
+            endpoint["alerts"] = build_alerts(requested, description)
 
         endpoints.append(endpoint)
 

@@ -23,6 +23,7 @@ import time
 
 import docker
 
+from .alerts import parse_type_list, resolve_allowlist
 from .health import Thresholds
 from .logging_setup import register_secret, setup_logging
 from .monitor import ContainerMonitor
@@ -68,7 +69,16 @@ EXCLUDES = [x.strip() for x in os.environ.get(
 MEM_THRESHOLD = _float_or_none("AUTOGATUS_MEM_THRESHOLD") if "AUTOGATUS_MEM_THRESHOLD" in os.environ else 95.0
 CPU_THRESHOLD = _float_or_none("AUTOGATUS_CPU_THRESHOLD")
 
+# Alert routing: which Gatus providers each endpoint may fire. The allowlist is
+# derived from Gatus's own configured providers when AUTOGATUS_GATUS_CONFIG points
+# at its config; ALERT_TYPES is both the Tier-2 default channels and the fallback
+# allowlist when no config is mounted.
+GATUS_CONFIG_PATH = os.environ.get("AUTOGATUS_GATUS_CONFIG", "")
+ALERT_TYPES = parse_type_list(os.environ.get("AUTOGATUS_ALERT_TYPES")) or []
+OUTPUT_BASENAME = os.path.basename(OUTPUT_PATH)
+
 _running = True
+_last_allowlist = None
 
 
 def _handle_signal(signum, _frame):
@@ -163,6 +173,7 @@ def run() -> int:
                 heartbeat_interval=HEARTBEAT_INTERVAL,
                 default_group=DEFAULT_GROUP,
                 store=store,
+                default_alert_types=ALERT_TYPES or ["custom"],
             )
 
         try:
@@ -178,15 +189,23 @@ def run() -> int:
 
 
 def _tick(client, writer: Writer, monitor) -> None:
+    global _last_allowlist
+    # Re-derive each cycle so adding a provider to Gatus self-heals with no
+    # restart. Log only when the resolved set changes.
+    allowlist, source = resolve_allowlist(GATUS_CONFIG_PATH, ALERT_TYPES, skip_basename=OUTPUT_BASENAME)
+    if allowlist != _last_allowlist:
+        logger.info("alert allowlist (%s): %s", source, ", ".join(sorted(allowlist)) or "(none)")
+        _last_allowlist = allowlist
+
     try:
-        endpoints = gather_endpoints(client, default_group=DEFAULT_GROUP)
+        endpoints = gather_endpoints(client, default_group=DEFAULT_GROUP, allowlist=allowlist)
     except Exception as e:
         logger.error("label discovery failed: %s", e)
         endpoints = []
 
     declarations, verdicts = ([], [])
     if monitor is not None:
-        declarations, verdicts = monitor.reconcile()
+        declarations, verdicts = monitor.reconcile(allowlist=allowlist)
 
     # Write declarations first so Gatus loads them before we push their statuses.
     wrote = writer.reconcile(endpoints, external_endpoints=declarations)

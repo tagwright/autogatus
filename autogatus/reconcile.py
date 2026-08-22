@@ -6,17 +6,20 @@ import logging
 import os
 import tempfile
 
+from .alerts import filter_alerts
 from .labels import parse_container
 from .render import render, render_stable
 
 logger = logging.getLogger("autogatus")
 
 
-def gather_endpoints(client, default_group: str = "") -> list:
+def gather_endpoints(client, default_group: str = "", allowlist=None) -> list:
     """Compile endpoints from every running, gatus-enabled container.
 
     A single container with a malformed endpoint (e.g. missing url) is logged
-    and skipped rather than taking the whole reconcile down.
+    and skipped rather than taking the whole reconcile down. Requested alert
+    channels are filtered against ``allowlist`` (the providers Gatus has
+    configured); unconfigured ones are dropped with a warning.
     """
     endpoints = []
     for container in client.containers.list():
@@ -27,6 +30,13 @@ def gather_endpoints(client, default_group: str = "") -> list:
         except ValueError as e:
             logger.warning("skipping container %s: %s", name, e)
             continue
+        for ep in found:
+            if allowlist is not None and "alerts" in ep:
+                kept = filter_alerts(ep["alerts"], allowlist, f"{ep['group']}/{ep['name']}")
+                if kept:
+                    ep["alerts"] = kept
+                else:
+                    ep.pop("alerts")
         if found:
             logger.debug("container %s -> %d endpoint(s)", name, len(found))
             endpoints.extend(found)

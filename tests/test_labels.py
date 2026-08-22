@@ -130,3 +130,36 @@ def test_unrelated_labels_ignored():
     }
     eps = parse_container(labels, "svc")
     assert len(eps) == 1
+
+
+def test_alerts_list_label_overrides_bool():
+    labels = {
+        "gatus.enable": "true",
+        "gatus.web.url": "http://svc/",
+        "gatus.web.alerts": "custom,ntfy",
+    }
+    ep = parse_container(labels, "svc")[0]
+    assert [a["type"] for a in ep["alerts"]] == ["custom", "ntfy"]
+
+
+def test_alerts_none_disables():
+    labels = {
+        "gatus.enable": "true",
+        "gatus.web.url": "http://svc/",
+        "gatus.web.alerts": "none",
+    }
+    ep = parse_container(labels, "svc")[0]
+    assert "alerts" not in ep
+
+
+def test_alert_bool_backcompat_default_custom():
+    # No alerts field, no alert field -> single custom alert (unchanged behavior)
+    labels = {"gatus.enable": "true", "gatus.web.url": "http://svc/"}
+    ep = parse_container(labels, "svc")[0]
+    assert ep["alerts"] == [{"type": "custom", "description": "web is down"}]
+
+
+def test_alert_false_backcompat():
+    labels = {"gatus.enable": "true", "gatus.web.url": "http://svc/", "gatus.web.alert": "false"}
+    ep = parse_container(labels, "svc")[0]
+    assert "alerts" not in ep

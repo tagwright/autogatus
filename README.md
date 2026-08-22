@@ -69,14 +69,14 @@ Each endpoint is keyed by an id segment (`<id>`), so one container can expose ma
 | `gatus.<id>.method` | — | HTTP method |
 | `gatus.<id>.body` | — | HTTP request body |
 | `gatus.<id>.headers.<Name>` | — | HTTP header, repeatable |
-| `gatus.<id>.alert` | `true` | Attaches a `custom` alert; set `false` to skip |
+| `gatus.<id>.alert` | `true` | Legacy on/off; attaches a single `custom` alert |
+| `gatus.<id>.alerts` | *(from `.alert`)* | Comma list of Gatus providers, e.g. `custom,ntfy`; wins over `.alert` |
 | `gatus.<id>.alert-description` | `<name> is down` | Alert description |
 
 Conditions use [Gatus's condition syntax](https://github.com/TwiN/gatus#conditions)
 verbatim, so anything Gatus supports (`[BODY].x`, `[CERTIFICATE_EXPIRATION]`, …) works.
 
-The `custom` alert this attaches must be configured once in your Gatus base config
-(`alerting.custom` with a `default-alert`). autogatus references it; it does not define it.
+See **Alert routing** below for how providers are chosen and validated.
 
 ## Container monitoring (every container, no labels)
 
@@ -135,6 +135,33 @@ A structural redesign of Gatus's own components would need the markup refreshed;
 color/theme changes track automatically. Add a link from the Gatus dashboard with
 a `ui.buttons` entry pointing at `/details`.
 
+## Alert routing
+
+autogatus never sends notifications itself. It writes the `alerts:` block of each
+endpoint, naming Gatus alert providers; **Gatus does the sending**. The routing:
+
+- **Tier 1** (labeled endpoints): `gatus.<id>.alerts=custom,ntfy` picks providers
+  per endpoint. The legacy `gatus.<id>.alert=true|false` still works (true -> a
+  single `custom` alert). A list wins over the bool; `none` disables.
+- **Tier 2** (monitored containers): the global default is `AUTOGATUS_ALERT_TYPES`
+  (or `custom` if unset), overridable per container with the label
+  `autogatus.alerts=ntfy,custom` (`none` to silence a container).
+
+**The boundary — read this.** A named provider only fires if it is **configured in
+Gatus's own `alerting:` section**. autogatus references providers; it does not define
+them. To avoid silent dead alerts, autogatus derives the set of *configured* providers
+and drops anything else with a warning:
+
+- Point `AUTOGATUS_GATUS_CONFIG` at Gatus's config file or directory (mount it
+  read-only). autogatus reads only the KEYS under `alerting:` — never their values, so
+  no secrets are touched — and re-reads each cycle, so adding a provider to Gatus starts
+  working with no restart.
+- If that is unset, `AUTOGATUS_ALERT_TYPES` is used as the allowlist; if that is unset
+  too, the allowlist is just `custom`.
+
+A label naming a provider that is not in the allowlist is dropped and logged at WARN,
+naming the endpoint and the provider.
+
 ## Configuration
 
 | Env | Default | Meaning |
@@ -154,6 +181,8 @@ a `ui.buttons` entry pointing at `/details`.
 | `AUTOGATUS_MEM_THRESHOLD` | `95` | Fail over this % of memory limit (blank/`none` disables) |
 | `AUTOGATUS_CPU_THRESHOLD` | *(disabled)* | Fail over this CPU % if set |
 | `AUTOGATUS_EXCLUDE` | `autogatus,claude-code` | Comma-separated name substrings to skip |
+| `AUTOGATUS_GATUS_CONFIG` | *(none)* | Path to Gatus's config (file or dir); derives the alert-provider allowlist |
+| `AUTOGATUS_ALERT_TYPES` | `custom` | Default alert channels for monitored containers, and allowlist fallback |
 | `AUTOGATUS_WEB` | `true` | Serve the `/details` detail view |
 | `AUTOGATUS_WEB_PORT` | `8080` | Port for the detail view |
 

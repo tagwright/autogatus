@@ -16,10 +16,15 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from .alerts import build_alerts, filter_alerts, parse_type_list
 from .collector import collect_health
 from .health import Thresholds, evaluate
 
 logger = logging.getLogger("autogatus")
+
+# Per-container override of alert channels (distinct from the gatus.* opt-in
+# namespace used to declare probe endpoints).
+ALERTS_LABEL = "autogatus.alerts"
 
 _SAFE = re.compile(r"[^a-zA-Z0-9_-]+")
 # Gatus builds an endpoint key by sanitizing group and name (underscores and
@@ -50,6 +55,7 @@ class ContainerMonitor:
         default_group: str = "",
         max_workers: int = 16,
         store=None,
+        default_alert_types=None,
     ):
         self.client = client
         self.pusher = pusher
@@ -62,6 +68,9 @@ class ContainerMonitor:
         self.default_group = default_group
         self.max_workers = max_workers
         self.store = store
+        # Default alert channels for auto-monitored containers, overridable per
+        # container via the autogatus.alerts label.
+        self.default_alert_types = list(default_alert_types) if default_alert_types else ["custom"]
         self._seen_running = set()
         self._prev_restart = {}
 
@@ -76,11 +85,20 @@ class ContainerMonitor:
             return _safe(self.default_group)
         return _safe(container.name)
 
-    def reconcile(self):
+    def _alert_types_for(self, container) -> list:
+        """Resolve a container's requested alert channels: its autogatus.alerts
+        label if present, else the global default."""
+        label = (container.labels or {}).get(ALERTS_LABEL)
+        requested = parse_type_list(label)
+        return requested if requested is not None else list(self.default_alert_types)
+
+    def reconcile(self, allowlist=None):
         """Return ``(declarations, verdicts)``.
 
         ``declarations`` are Gatus external-endpoint dicts; ``verdicts`` is a list
         of ``(key, Verdict)`` to push after Gatus has loaded the declarations.
+        ``allowlist`` is the set of providers Gatus has configured; requested
+        alert channels not in it are dropped with a warning.
         """
         try:
             containers = self.client.containers.list(all=True)
@@ -127,13 +145,17 @@ class ContainerMonitor:
             self._prev_restart[c.name] = health.restart_count
             name = c.name
             key = _gatus_key(stack, name)
-            declarations.append({
+            decl = {
                 "name": name,
                 "group": stack,
                 "token": self.token,
                 "heartbeat": {"interval": self.heartbeat_interval},
-                "alerts": [{"type": "custom", "description": f"{name} ({stack})"}],
-            })
+            }
+            requested = build_alerts(self._alert_types_for(c), f"{name} ({stack})")
+            alerts = filter_alerts(requested, allowlist, key) if allowlist is not None else requested
+            if alerts:
+                decl["alerts"] = alerts
+            declarations.append(decl)
             verdicts.append((key, verdict))
             if self.store is not None:
                 self.store.update(key, stack, name, health, verdict, ts)
