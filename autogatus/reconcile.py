@@ -57,13 +57,15 @@ class Writer:
         self.output_path = output_path
         self._last_stable = None
 
-    def reconcile(self, endpoints: list) -> bool:
-        stable = render_stable(endpoints)
+    def reconcile(self, endpoints: list, external_endpoints: list = None) -> bool:
+        external_endpoints = external_endpoints or []
+        stable = render_stable(endpoints, external_endpoints)
         if stable == self._last_stable:
             return False
-        _atomic_write(self.output_path, render(endpoints))
+        _atomic_write(self.output_path, render(endpoints, external_endpoints))
         self._last_stable = stable
         logger.info(
-            "wrote %d endpoint(s) to %s", len(endpoints), self.output_path
+            "wrote %d endpoint(s) + %d external endpoint(s) to %s",
+            len(endpoints), len(external_endpoints), self.output_path,
         )
         return True
