@@ -78,6 +78,46 @@ verbatim, so anything Gatus supports (`[BODY].x`, `[CERTIFICATE_EXPIRATION]`, �
 The `custom` alert this attaches must be configured once in your Gatus base config
 (`alerting.custom` with a `default-alert`). autogatus references it; it does not define it.
 
+## Container monitoring (every container, no labels)
+
+Label discovery covers services you probe. But most containers have no useful
+HTTP/TCP endpoint (workers, crons, sidecars, daemons), and the only signal that
+exists for *all* of them is Docker state. Set `AUTOGATUS_MONITOR_CONTAINERS=true`
+and autogatus monitors **every** container by reading Docker directly and
+**pushing** to Gatus [external endpoints](https://github.com/TwiN/gatus#external-endpoints).
+No compose edits, no recreates.
+
+For each container it evaluates a composite verdict and pushes:
+
+- **success** = running AND not OOMKilled AND healthcheck not failing AND memory
+  under threshold AND (optionally) CPU under threshold AND no new restarts
+- **error** = a live status line carrying the real numbers, e.g.
+  `mem 96.0%>=95%; restarted (2->3) | state=running cpu=12.0% mem=1.9GB/2.0GB(96%) restarts=3 health=unhealthy`
+- **duration** = one headline metric graphed over time (`mem_used_mb` by default,
+  or `cpu_percent` / `mem_percent`)
+
+Gatus's per-endpoint `heartbeat` is set automatically, so if autogatus itself
+stops pushing, every container flips to down — the monitor is monitored.
+
+**Stack grouping.** Because a Compose project can hold many logical stacks, pass a
+`{service: stack}` map via `AUTOGATUS_STACK_MAP` (a YAML file) to group endpoints
+by stack. Anything unmapped falls back to the container name.
+
+**What is and isn't monitored.** A container is monitored once it has been seen
+running, so a crash or stop flips it to failing (with the heartbeat backstop),
+while a one-shot that merely exited is ignored. Removed containers drop off.
+Exclude noise with `AUTOGATUS_EXCLUDE` (default `autogatus,claude-code`).
+
+**Thresholds.** Memory pressure and crashloops fail by default because they mean
+"about to fall over." CPU is reported but not a failure unless you set
+`AUTOGATUS_CPU_THRESHOLD` — a busy container is not a broken one.
+
+> This is the ceiling of what Gatus can hold: availability history, one graphed
+> number, and a status string. For true CPU/memory/network time-series and
+> dashboards, point Prometheus at a metrics exporter instead — the same stats
+> autogatus already collects. That exporter is a planned addition; Gatus stays the
+> status layer.
+
 ## Configuration
 
 | Env | Default | Meaning |
@@ -86,6 +126,15 @@ The `custom` alert this attaches must be configured once in your Gatus base conf
 | `AUTOGATUS_DEFAULT_GROUP` | *(empty)* | Fallback group; empty means "group by container name" |
 | `AUTOGATUS_RESYNC_INTERVAL` | `15` | Seconds between reconciles / event backstop |
 | `AUTOGATUS_LOG_LEVEL` | `INFO` | `DEBUG` for per-container detail |
+| `AUTOGATUS_MONITOR_CONTAINERS` | `false` | Enable container monitoring (Tier 2) |
+| `AUTOGATUS_GATUS_URL` | `http://gatus:8080` | Gatus base URL for pushes |
+| `AUTOGATUS_PUSH_TOKEN` | *(generated)* | Bearer token; auto-generated and persisted if unset |
+| `AUTOGATUS_STACK_MAP` | *(none)* | Path to a `{service: stack}` YAML for grouping |
+| `AUTOGATUS_HEADLINE_METRIC` | `mem_used_mb` | Graphed metric: `mem_used_mb`, `mem_percent`, `cpu_percent` |
+| `AUTOGATUS_HEARTBEAT_INTERVAL` | `90s` | No push within this -> Gatus marks the container down |
+| `AUTOGATUS_MEM_THRESHOLD` | `95` | Fail over this % of memory limit (blank/`none` disables) |
+| `AUTOGATUS_CPU_THRESHOLD` | *(disabled)* | Fail over this CPU % if set |
+| `AUTOGATUS_EXCLUDE` | `autogatus,claude-code` | Comma-separated name substrings to skip |
 
 ## Design notes
 
