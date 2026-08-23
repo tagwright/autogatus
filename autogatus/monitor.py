@@ -75,8 +75,8 @@ class ContainerMonitor:
         self.default_alert_types = list(default_alert_types) if default_alert_types else ["custom"]
         self.exec_enabled = exec_enabled
         self._warned_exec_disabled = False
-        self._seen_running = set()
-        self._prev_restart = {}
+        self._seen_running: set[str] = set()
+        self._prev_restart: dict[str, int] = {}
 
     def _excluded(self, name: str) -> bool:
         return any(pat and pat in name for pat in self.excludes)

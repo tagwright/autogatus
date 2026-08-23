@@ -66,7 +66,7 @@ def configured_providers(path: str, skip_basename: str = "") -> set:
     else:
         return set()
 
-    providers = set()
+    providers: set[str] = set()
     for fp in files:
         try:
             with open(fp) as f:
@@ -109,7 +109,8 @@ def filter_alerts(alerts, allowlist: set, context: str) -> list:
     """
     if not alerts:
         return []
-    kept, dropped = [], []
+    kept: list[dict] = []
+    dropped: list[dict] = []
     for a in alerts:
         (kept if a.get("type") in allowlist else dropped).append(a)
     if dropped:

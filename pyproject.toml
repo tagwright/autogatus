@@ -25,3 +25,10 @@ select = ["F", "E", "W", "I", "B", "UP", "C4"]
 # wrapping them to satisfy the line limit hurts readability and, inside the
 # triple-quoted blocks, would inject newlines into the rendered output.
 "autogatus/web.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["autogatus"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+no_implicit_optional = true

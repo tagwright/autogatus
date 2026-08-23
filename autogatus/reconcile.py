@@ -65,9 +65,9 @@ class Writer:
 
     def __init__(self, output_path: str):
         self.output_path = output_path
-        self._last_stable = None
+        self._last_stable: str | None = None
 
-    def reconcile(self, endpoints: list, external_endpoints: list = None) -> bool:
+    def reconcile(self, endpoints: list, external_endpoints: list | None = None) -> bool:
         external_endpoints = external_endpoints or []
         stable = render_stable(endpoints, external_endpoints)
         if stable == self._last_stable:

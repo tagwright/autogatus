@@ -55,7 +55,7 @@ class Check:
 
 def _bucket(labels: dict) -> dict:
     """Group ``autogatus.check.<id>.<field>`` labels by id."""
-    out = {}
+    out: dict[str, dict] = {}
     for k, v in (labels or {}).items():
         if not k.startswith(PREFIX):
             continue
@@ -91,7 +91,7 @@ def parse_container_checks(
     default_alert_types=None,
     default_interval: str = "90s",
     exec_enabled: bool = False,
-) -> list:
+) -> tuple[list[Check], bool]:
     """Compile a container's ``autogatus.check.*`` labels into Check objects.
 
     exec checks are dropped (returned in a separate flag via logging) when

@@ -14,7 +14,7 @@ from collections import deque
 class Store:
     def __init__(self, history: int = 50):
         self._lock = threading.Lock()
-        self._items = {}
+        self._items: dict[str, dict] = {}
         self._history = history
 
     def update(self, key, stack, name, health, verdict, ts):
