@@ -2,7 +2,7 @@
 
 Docker-label service discovery for [Gatus](https://github.com/TwiN/gatus). Label a container and it shows up on your Gatus dashboard. Autokuma, but for Gatus.
 
-Gatus keeps its endpoints in one config file. autogatus lets you put them on the containers instead, the way Traefik does routes. It watches the Docker daemon, turns `gatus.*` labels into a Gatus config file, and writes that file into the directory Gatus already loads from. Gatus hot-reloads it. Label a container and it starts being monitored. Remove the container and it drops off.
+Gatus keeps its endpoints in one config file. autogatus lets you put them on the containers instead, the way Traefik does routes. It watches the Docker daemon, turns `gatus.*` labels into a Gatus config file, and writes that file into the directory Gatus already loads from. Gatus hot-reloads it, so a container joins the dashboard when you label it and drops off when you delete it.
 
 Point Gatus's `GATUS_CONFIG_PATH` at a directory instead of a single file. Your hand-written base config (storage, alerting, UI) lives there, and autogatus writes a generated file next to it. Gatus merges every `*.yaml` it finds.
 
@@ -70,13 +70,13 @@ Each container gets a composite verdict:
 - **error**: a line with the actual numbers, for example `mem 96.0%>=95% | state=running cpu=12.0% mem=1.9GB/2.0GB(96%) restarts=3 health=unhealthy`
 - **duration**: one number graphed over time, `mem_used_mb` by default, or `cpu_percent` or `mem_percent`
 
-autogatus sets a Gatus heartbeat on each endpoint. If autogatus stops pushing, those endpoints go down, which also surfaces an autogatus outage rather than hiding it.
+autogatus sets a Gatus heartbeat on each endpoint. If autogatus stops pushing, those endpoints go down, which catches an autogatus outage too.
 
 **Grouping.** A Compose project holds many logical stacks under one project name, so pass a `{service: stack}` map with `AUTOGATUS_STACK_MAP` to group endpoints by stack. Unmapped services fall back to the container name.
 
 **What gets monitored.** autogatus starts watching a container once it has seen it running, so a crash or a stop becomes a failure (the heartbeat backs this up). A one-shot that ran and exited before autogatus ever saw it is left alone, and a removed container drops off. Skip noise with `AUTOGATUS_EXCLUDE` (default `autogatus,claude-code`).
 
-**Thresholds.** Memory pressure and restart loops fail by default, since both mean the container is about to fall over. CPU is reported but never fails on its own unless you set `AUTOGATUS_CPU_THRESHOLD`, since a container can legitimately run hot for a while.
+**Thresholds.** Memory pressure and restart loops fail by default, since both mean the container is about to fall over. CPU is reported but never fails on its own unless you set `AUTOGATUS_CPU_THRESHOLD`. A container can run hot for a while without being broken.
 
 Gatus holds three things per endpoint: availability history, one graphed number, and a status string. That is the ceiling here. For real CPU, memory, and network time series with graphs, put Prometheus in front of a metrics exporter fed by the same stats autogatus already collects. That exporter is planned. Gatus stays the status layer.
 
