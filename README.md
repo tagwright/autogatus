@@ -287,4 +287,4 @@ When running under Docker, cap log growth with a `logging:` block on the service
 
 ## License
 
-MIT
+[Apache-2.0](LICENSE), matching Gatus. Permissive, with an explicit patent grant.
