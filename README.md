@@ -1,18 +1,10 @@
 # autogatus
 
-**Docker-label service discovery for [Gatus](https://github.com/TwiN/gatus). Autokuma, but for Gatus.**
+Docker-label service discovery for [Gatus](https://github.com/TwiN/gatus). Label a container and it shows up on your Gatus dashboard. Autokuma, but for Gatus.
 
-Gatus is a wonderful config-as-code health monitor, but its config is one central
-YAML file. autogatus lets you define monitors the Traefik way: as labels on the
-containers themselves. It watches the Docker daemon, compiles `gatus.*` labels into
-a Gatus endpoint file, and writes it into the Gatus config directory. Gatus
-hot-reloads. Add a service, it starts being monitored; remove it, it stops. No
-central file to edit.
+Gatus keeps its endpoints in one config file. autogatus lets you put them on the containers instead, the way Traefik does routes. It watches the Docker daemon, turns `gatus.*` labels into a Gatus config file, and writes that file into the directory Gatus already loads from. Gatus hot-reloads it. Label a container and it starts being monitored. Remove the container and it drops off.
 
-It does not fork or patch Gatus. It sits beside it and writes a config file Gatus
-already knows how to read.
-
-## How it works
+Point Gatus's `GATUS_CONFIG_PATH` at a directory instead of a single file. Your hand-written base config (storage, alerting, UI) lives there, and autogatus writes a generated file next to it. Gatus merges every `*.yaml` it finds.
 
 ```
   containers with gatus.* labels
@@ -23,16 +15,12 @@ already knows how to read.
             └──writes──►  /config/generated/autogatus.yaml
                                     │
                                     ▼
-                              Gatus (GATUS_CONFIG_PATH=/config, merges + hot-reloads)
+                       Gatus (GATUS_CONFIG_PATH=/config, merges + hot-reloads)
 ```
-
-Point Gatus's `GATUS_CONFIG_PATH` at a **directory**. Your hand-written base config
-(storage, alerting, UI) lives there; autogatus drops a generated file beside it.
-Gatus merges every `*.yaml` in the directory.
 
 ## Quick start
 
-See [`examples/docker-compose.yml`](examples/docker-compose.yml). The short version:
+Full example in [`examples/docker-compose.yml`](examples/docker-compose.yml). The core of it:
 
 ```yaml
 autogatus:
@@ -42,7 +30,7 @@ autogatus:
     - gatus-generated:/output          # Gatus mounts the same volume at /config/generated
 ```
 
-Then label any container you want monitored:
+Then label anything you want watched:
 
 ```yaml
 labels:
@@ -51,141 +39,88 @@ labels:
   gatus.web.conditions.0: "[STATUS] == 200"
 ```
 
-## Label reference
+## Labels
 
-Discovery is **opt-in**: a container is ignored unless it sets `gatus.enable=true`.
-
-Each endpoint is keyed by an id segment (`<id>`), so one container can expose many.
-`gatus.<id>.url` is the only required field.
+A container is ignored unless it sets `gatus.enable=true`. Each endpoint gets an id segment (`<id>`), so one container can expose several. The only required field is `gatus.<id>.url`.
 
 | Label | Default | Notes |
 |-------|---------|-------|
-| `gatus.enable` | — | `true` to opt the container in (required) |
-| `gatus.<id>.url` | — | **Required.** `http(s)://`, `tcp://host:port`, `icmp://host` |
+| `gatus.enable` | - | `true` to opt the container in (required) |
+| `gatus.<id>.url` | - | Required. `http(s)://`, `tcp://host:port`, or `icmp://host` |
 | `gatus.<id>.name` | `<id>` | Endpoint display name |
-| `gatus.<id>.group` | container name | Dashboard group. Overridable; global default via `AUTOGATUS_DEFAULT_GROUP` |
+| `gatus.<id>.group` | container name | Dashboard group, overridable, with a global default in `AUTOGATUS_DEFAULT_GROUP` |
 | `gatus.<id>.interval` | `60s` | Check interval |
-| `gatus.<id>.conditions.<n>` | by scheme | Indexed. HTTP → `[STATUS] == 200`, TCP/ICMP → `[CONNECTED] == true` |
-| `gatus.<id>.method` | — | HTTP method |
-| `gatus.<id>.body` | — | HTTP request body |
-| `gatus.<id>.headers.<Name>` | — | HTTP header, repeatable |
-| `gatus.<id>.alert` | `true` | Legacy on/off; attaches a single `custom` alert |
-| `gatus.<id>.alerts` | *(from `.alert`)* | Comma list of Gatus providers, e.g. `custom,ntfy`; wins over `.alert` |
+| `gatus.<id>.conditions.<n>` | by scheme | Indexed. HTTP defaults to `[STATUS] == 200`, TCP and ICMP to `[CONNECTED] == true` |
+| `gatus.<id>.method` | - | HTTP method |
+| `gatus.<id>.body` | - | HTTP request body |
+| `gatus.<id>.headers.<Name>` | - | HTTP header, repeatable |
+| `gatus.<id>.alert` | `true` | Legacy on/off, attaches a single `custom` alert |
+| `gatus.<id>.alerts` | *(from `.alert`)* | Comma list of Gatus providers like `custom,ntfy`, wins over `.alert` |
 | `gatus.<id>.alert-description` | `<name> is down` | Alert description |
 
-Conditions use [Gatus's condition syntax](https://github.com/TwiN/gatus#conditions)
-verbatim, so anything Gatus supports (`[BODY].x`, `[CERTIFICATE_EXPIRATION]`, …) works.
+Conditions pass through to Gatus untouched, so anything Gatus understands (`[BODY].x`, `[CERTIFICATE_EXPIRATION]`, and the rest) works. Provider selection is covered under Alert routing.
 
-See **Alert routing** below for how providers are chosen and validated.
+## Monitoring every container
 
-## Container monitoring (every container, no labels)
+Labels cover the services you can probe. Most containers have nothing to probe, though: workers, cron jobs, sidecars, DNS helpers. The one signal they all share is their Docker state. Set `AUTOGATUS_MONITOR_CONTAINERS=true` and autogatus reads that state for every container and pushes it to Gatus as an [external endpoint](https://github.com/TwiN/gatus#external-endpoints). Nothing to label, no container to recreate.
 
-Label discovery covers services you probe. But most containers have no useful
-HTTP/TCP endpoint (workers, crons, sidecars, daemons), and the only signal that
-exists for *all* of them is Docker state. Set `AUTOGATUS_MONITOR_CONTAINERS=true`
-and autogatus monitors **every** container by reading Docker directly and
-**pushing** to Gatus [external endpoints](https://github.com/TwiN/gatus#external-endpoints).
-No compose edits, no recreates.
+Each container gets a composite verdict:
 
-For each container it evaluates a composite verdict and pushes:
+- **success**: running, not OOM-killed, healthcheck passing, memory under threshold, no fresh restarts, and CPU under threshold if you set one
+- **error**: a line with the actual numbers, for example `mem 96.0%>=95% | state=running cpu=12.0% mem=1.9GB/2.0GB(96%) restarts=3 health=unhealthy`
+- **duration**: one number graphed over time, `mem_used_mb` by default, or `cpu_percent` or `mem_percent`
 
-- **success** = running AND not OOMKilled AND healthcheck not failing AND memory
-  under threshold AND (optionally) CPU under threshold AND no new restarts
-- **error** = a live status line carrying the real numbers, e.g.
-  `mem 96.0%>=95%; restarted (2->3) | state=running cpu=12.0% mem=1.9GB/2.0GB(96%) restarts=3 health=unhealthy`
-- **duration** = one headline metric graphed over time (`mem_used_mb` by default,
-  or `cpu_percent` / `mem_percent`)
+autogatus sets a Gatus heartbeat on each endpoint. If autogatus stops pushing, those endpoints go down, which also surfaces an autogatus outage rather than hiding it.
 
-Gatus's per-endpoint `heartbeat` is set automatically, so if autogatus itself
-stops pushing, every container flips to down — the monitor is monitored.
+**Grouping.** A Compose project holds many logical stacks under one project name, so pass a `{service: stack}` map with `AUTOGATUS_STACK_MAP` to group endpoints by stack. Unmapped services fall back to the container name.
 
-**Stack grouping.** Because a Compose project can hold many logical stacks, pass a
-`{service: stack}` map via `AUTOGATUS_STACK_MAP` (a YAML file) to group endpoints
-by stack. Anything unmapped falls back to the container name.
+**What gets monitored.** autogatus starts watching a container once it has seen it running, so a crash or a stop becomes a failure (the heartbeat backs this up). A one-shot that ran and exited before autogatus ever saw it is left alone, and a removed container drops off. Skip noise with `AUTOGATUS_EXCLUDE` (default `autogatus,claude-code`).
 
-**What is and isn't monitored.** A container is monitored once it has been seen
-running, so a crash or stop flips it to failing (with the heartbeat backstop),
-while a one-shot that merely exited is ignored. Removed containers drop off.
-Exclude noise with `AUTOGATUS_EXCLUDE` (default `autogatus,claude-code`).
+**Thresholds.** Memory pressure and restart loops fail by default, since both mean the container is about to fall over. CPU is reported but never fails on its own unless you set `AUTOGATUS_CPU_THRESHOLD`, since a container can legitimately run hot for a while.
 
-**Thresholds.** Memory pressure and crashloops fail by default because they mean
-"about to fall over." CPU is reported but not a failure unless you set
-`AUTOGATUS_CPU_THRESHOLD` — a busy container is not a broken one.
+Gatus holds three things per endpoint: availability history, one graphed number, and a status string. That is the ceiling here. For real CPU, memory, and network time series with graphs, put Prometheus in front of a metrics exporter fed by the same stats autogatus already collects. That exporter is planned. Gatus stays the status layer.
 
-> This is the ceiling of what Gatus can hold: availability history, one graphed
-> number, and a status string. For true CPU/memory/network time-series and
-> dashboards, point Prometheus at a metrics exporter instead — the same stats
-> autogatus already collects. That exporter is a planned addition; Gatus stays the
-> status layer.
+## Detail view
 
-## Detail view (Gatus-styled)
+`AUTOGATUS_WEB=true` (the default) serves a read-only view of everything autogatus monitors, styled from Gatus's own stylesheet. Route it on the same host under `/details` so it lands behind the same auth and its URLs line up with Gatus's.
 
-With `AUTOGATUS_WEB=true` (default), autogatus serves a read-only detail view of
-everything it monitors, styled to match Gatus by loading Gatus's own stylesheet.
-Serve it on the same host under `/details` (path-prefix route to autogatus) so it
-sits behind the same auth and mirrors Gatus's URLs:
+- `/details`: every container, with client-side search, a filter by group or health, and a sort by name, group, memory, CPU, or status. Your choices persist in localStorage.
+- `/details/<key>`: one container, the counterpart to Gatus's `/endpoints/<key>`, showing CPU, memory, network, block I/O, restarts, health, uptime, and recent status history.
 
-- `/details` — every container, with client-side search, filter (by group / health)
-  and sort (name / group / memory / CPU / status); choices persist in localStorage
-- `/details/<key>` — one container (mirrors Gatus's `/endpoints/<key>`), with CPU,
-  memory, network, block I/O, restarts, health, uptime, and status history
-
-It reuses Gatus's live `/css/app.css`, so the theme tracks Gatus across versions.
-A structural redesign of Gatus's own components would need the markup refreshed;
-color/theme changes track automatically. Add a link from the Gatus dashboard with
-a `ui.buttons` entry pointing at `/details`.
+It loads Gatus's live `/css/app.css`, so color and theme changes ride along on a Gatus upgrade. A structural redesign of Gatus's components would need the markup refreshed. Link to it from the Gatus dashboard with a `ui.buttons` entry pointing at `/details`.
 
 ## Alert routing
 
-autogatus never sends notifications itself. It writes the `alerts:` block of each
-endpoint, naming Gatus alert providers; **Gatus does the sending**. The routing:
+autogatus writes the `alerts:` block on each endpoint and names Gatus providers in it. Gatus does the sending.
 
-- **Tier 1** (labeled endpoints): `gatus.<id>.alerts=custom,ntfy` picks providers
-  per endpoint. The legacy `gatus.<id>.alert=true|false` still works (true -> a
-  single `custom` alert). A list wins over the bool; `none` disables.
-- **Tier 2** (monitored containers): the global default is `AUTOGATUS_ALERT_TYPES`
-  (or `custom` if unset), overridable per container with the label
-  `autogatus.alerts=ntfy,custom` (`none` to silence a container).
+- **Tier 1** (labeled endpoints): `gatus.<id>.alerts=custom,ntfy` sets the providers for that endpoint. The older `gatus.<id>.alert=true|false` still works and maps to a single `custom` alert. A list wins over the bool, and `none` turns alerts off.
+- **Tier 2** (monitored containers): the default comes from `AUTOGATUS_ALERT_TYPES` (or `custom` if you leave it unset), overridable per container with `autogatus.alerts=ntfy,custom` (`none` silences one container).
 
-**The boundary — read this.** A named provider only fires if it is **configured in
-Gatus's own `alerting:` section**. autogatus references providers; it does not define
-them. To avoid silent dead alerts, autogatus derives the set of *configured* providers
-and drops anything else with a warning:
+A provider only fires if it is configured in Gatus's own `alerting:` section. autogatus names providers, it does not define them, so a label pointing at a provider Gatus has never heard of would be a dead alert. To catch that, autogatus builds an allowlist of the providers Gatus actually has configured and drops anything outside it:
 
-- Point `AUTOGATUS_GATUS_CONFIG` at Gatus's config file or directory (mount it
-  read-only). autogatus reads only the KEYS under `alerting:` — never their values, so
-  no secrets are touched — and re-reads each cycle, so adding a provider to Gatus starts
-  working with no restart.
-- If that is unset, `AUTOGATUS_ALERT_TYPES` is used as the allowlist; if that is unset
-  too, the allowlist is just `custom`.
+- Set `AUTOGATUS_GATUS_CONFIG` to Gatus's config file or directory, mounted read-only. autogatus reads the keys under `alerting:` and nothing else (no values, so no secrets), and re-reads them each cycle, so a provider you add to Gatus starts working without a restart.
+- With that unset, `AUTOGATUS_ALERT_TYPES` becomes the allowlist. With both unset, the allowlist is just `custom`.
 
-A label naming a provider that is not in the allowlist is dropped and logged at WARN,
-naming the endpoint and the provider.
+A label naming a provider outside the allowlist is dropped and logged at WARN, with the endpoint and provider named.
 
-## Checks (reach what Gatus cannot)
+## Checks
 
-Gatus probes from its own vantage point, so it cannot check a headless container
-(no HTTP endpoint) or one on a network it cannot reach. autogatus already holds the
-Docker socket, so it can run the check itself and push the verdict as an external
-endpoint. This is the use case in Gatus issue #647 (monitoring things like
-`cloudflare-ddns` that have no web server), solved without Gatus needing shell
-support. Checks require container monitoring (`AUTOGATUS_MONITOR_CONTAINERS=true`).
+Gatus probes from where it runs, so it cannot see a headless container with no HTTP endpoint, or one on a network it cannot reach. autogatus is already on the Docker socket, so it can run the check itself and push the result as an external endpoint. This is the ask in Gatus issue [#647](https://github.com/TwiN/gatus/issues/647): monitoring something like `cloudflare-ddns` that serves no port, without Gatus needing shell support. Checks need container monitoring on (`AUTOGATUS_MONITOR_CONTAINERS=true`).
 
-Add one or more checks per container with `autogatus.check.<id>.*` labels:
+Add checks to a container with `autogatus.check.<id>.*` labels:
 
 | Label | Meaning |
 |-------|---------|
-| `autogatus.check.<id>.exec` | Command to run inside the container (via `/bin/sh -c`); exit 0 = healthy |
+| `autogatus.check.<id>.exec` | Command to run inside the container (via `/bin/sh -c`), exit 0 means healthy |
 | `autogatus.check.<id>.tcp` | `host:port` (or just `port`, host defaults to the container name) to TCP-connect |
 | `autogatus.check.<id>.name` | Endpoint name (default `<container>-<id>`) |
 | `autogatus.check.<id>.group` | Dashboard group (default the container's stack) |
 | `autogatus.check.<id>.interval` | Heartbeat interval for the endpoint |
 | `autogatus.check.<id>.timeout` | Check timeout in seconds (default 5) |
 | `autogatus.check.<id>.description` | Alert description |
-| `autogatus.check.<id>.alerts` | Comma list of Gatus providers (same routing as everything else) |
+| `autogatus.check.<id>.alerts` | Comma list of Gatus providers, same routing as everything else |
 
-Worked example (issue #647): a headless `cloudflare-ddns` container with no port to
-probe, checked by a command run inside it:
+A headless `cloudflare-ddns` container, checked by a command run inside it:
 
 ```yaml
 services:
@@ -196,95 +131,63 @@ services:
       autogatus.check.alive.alerts: "custom"
 ```
 
-Or a TCP check against a service on a network autogatus shares:
+A TCP check against a service on a network autogatus shares:
 
 ```yaml
     labels:
       autogatus.check.api.tcp: "8080"
 ```
 
-**Security (exec).** `exec` runs arbitrary commands inside containers. Note that a
-`:ro` Docker socket mount does NOT prevent this: the exec API is available regardless.
-So exec is gated twice: the per-container label AND a global opt-in
-`AUTOGATUS_EXEC_CHECKS=true` (default off). With it off, `exec` labels are ignored
-with a one-time warning; `tcp` checks are unaffected. Only enable it if you trust the
-labels on your containers.
+Exec runs commands inside your containers, and a `:ro` socket mount does not stop it, because the exec API ignores the mount flag. So exec stays off until you turn it on in two places: the per-container label and a global `AUTOGATUS_EXEC_CHECKS=true` (default off). With the global flag off, exec labels are ignored and logged once, while tcp checks keep working. Turn it on only if you trust the labels on your containers.
 
-**TCP reachability.** A `tcp` check connects from autogatus's own network position, so
-autogatus must share a Docker network with the target. `exec` has no such limitation,
-since it goes through the Docker API rather than the network.
+A tcp check dials from autogatus's own network position, so autogatus has to share a Docker network with the target. Exec has no such constraint, since it goes over the Docker API rather than the network.
 
 ## Configuration
 
 | Env | Default | Meaning |
 |-----|---------|---------|
 | `AUTOGATUS_OUTPUT` | `/output/autogatus.yaml` | Where the generated file is written |
-| `AUTOGATUS_DEFAULT_GROUP` | *(empty)* | Fallback group; empty means "group by container name" |
-| `AUTOGATUS_RESYNC_INTERVAL` | `15` | Seconds between reconciles / event backstop |
+| `AUTOGATUS_DEFAULT_GROUP` | *(empty)* | Fallback group, empty means group by container name |
+| `AUTOGATUS_RESYNC_INTERVAL` | `15` | Seconds between reconciles |
 | `AUTOGATUS_LOG_LEVEL` | `INFO` | `DEBUG` for per-container detail |
 | `AUTOGATUS_LOG_FORMAT` | `text` | `text` (human) or `json` (one object per line, for aggregators) |
-| `AUTOGATUS_ACCESS_LOG_LEVEL` | `INFO` | Level for `/details` request logs; `OFF` to suppress |
+| `AUTOGATUS_ACCESS_LOG_LEVEL` | `INFO` | Level for `/details` request logs, `OFF` to suppress |
 | `AUTOGATUS_MONITOR_CONTAINERS` | `false` | Enable container monitoring (Tier 2) |
 | `AUTOGATUS_GATUS_URL` | `http://gatus:8080` | Gatus base URL for pushes |
-| `AUTOGATUS_PUSH_TOKEN` | *(generated)* | Bearer token; auto-generated and persisted if unset |
+| `AUTOGATUS_PUSH_TOKEN` | *(generated)* | Bearer token, auto-generated and persisted if unset |
 | `AUTOGATUS_PUSH_TIMEOUT` | `15` | Seconds to wait on a single push before giving up |
 | `AUTOGATUS_STACK_MAP` | *(none)* | Path to a `{service: stack}` YAML for grouping |
-| `AUTOGATUS_HEADLINE_METRIC` | `mem_used_mb` | Graphed metric: `mem_used_mb`, `mem_percent`, `cpu_percent` |
-| `AUTOGATUS_HEARTBEAT_INTERVAL` | `90s` | No push within this -> Gatus marks the container down |
-| `AUTOGATUS_MEM_THRESHOLD` | `95` | Fail over this % of memory limit (blank/`none` disables) |
+| `AUTOGATUS_HEADLINE_METRIC` | `mem_used_mb` | Graphed metric: `mem_used_mb`, `mem_percent`, or `cpu_percent` |
+| `AUTOGATUS_HEARTBEAT_INTERVAL` | `90s` | No push within this and Gatus marks the container down |
+| `AUTOGATUS_MEM_THRESHOLD` | `95` | Fail over this % of memory limit (blank or `none` disables) |
 | `AUTOGATUS_CPU_THRESHOLD` | *(disabled)* | Fail over this CPU % if set |
 | `AUTOGATUS_EXCLUDE` | `autogatus,claude-code` | Comma-separated name substrings to skip |
 | `AUTOGATUS_EXEC_CHECKS` | `false` | Global opt-in for `autogatus.check.<id>.exec` (runs commands in containers) |
-| `AUTOGATUS_GATUS_CONFIG` | *(none)* | Path to Gatus's config (file or dir); derives the alert-provider allowlist |
-| `AUTOGATUS_ALERT_TYPES` | `custom` | Default alert channels for monitored containers, and allowlist fallback |
+| `AUTOGATUS_GATUS_CONFIG` | *(none)* | Path to Gatus's config (file or dir), used to build the alert-provider allowlist |
+| `AUTOGATUS_ALERT_TYPES` | `custom` | Default alert channels for monitored containers, and the allowlist fallback |
 | `AUTOGATUS_WEB` | `true` | Serve the `/details` detail view |
 | `AUTOGATUS_WEB_PORT` | `8080` | Port for the detail view |
 
-## Design notes
+## Behavior notes
 
-- **Read-only socket.** autogatus only lists containers and reads labels. Mount the
-  socket `:ro`.
-- **No churn.** The generated file is rewritten only when the meaningful content
-  changes (timestamp header excluded from the comparison), so an idle cluster never
-  triggers a Gatus reload.
-- **Atomic writes.** The file is written to a temp file and renamed, so Gatus never
-  reads a half-written config.
-- **One bad label doesn't break the world.** A container with a malformed endpoint is
-  logged and skipped; the rest still reconcile.
+autogatus only lists containers and reads their labels and stats, so mount the socket read-only. The generated file is rewritten only when its meaningful content changes, since the timestamp header is left out of the comparison, so an idle cluster never makes Gatus reload. Writes go to a temp file and are renamed into place, so Gatus never reads a half-written config. A container with a malformed label is logged and skipped, and the rest of the reconcile carries on.
 
 ## Logging
 
-One shared `autogatus` logger, two formats via `AUTOGATUS_LOG_FORMAT`:
+One `autogatus` logger, two formats set by `AUTOGATUS_LOG_FORMAT`:
 
 - **text** (default): `2026-01-01T00:00:00.000+00:00 autogatus INFO message`
-- **json**: one JSON object per line with `timestamp`, `level`, `logger`, `message`,
-  plus any structured extras (e.g. `http_method`, `http_status`, `duration_ms` on
-  access logs). Point it at any log aggregator.
+- **json**: one object per line with `timestamp`, `level`, `logger`, `message`, and any extras (access logs add `http_method`, `http_status`, `duration_ms`). Send it to any aggregator.
 
-Both honor `AUTOGATUS_LOG_LEVEL`. Third-party libraries stay at WARNING so they do
-not drown out autogatus output.
+Both respect `AUTOGATUS_LOG_LEVEL`, and third-party libraries are held at WARNING so they do not bury autogatus's own output. A healthy run at INFO stays quiet: the per-cycle line (`reconcile: N monitored, P pushed, F failed`) prints only when the config changes or a push fails, and the rest of the cycle detail sits at DEBUG.
 
-A healthy INFO run is quiet: a per-cycle summary (`reconcile: N monitored, P pushed,
-F failed`) is logged only when the generated config changes or a push fails; otherwise
-the cycle detail stays at DEBUG. Per-container detail is DEBUG throughout.
-
-The `/details` web view logs each request (method, path, status, duration) through the
-same logger and format. Set `AUTOGATUS_ACCESS_LOG_LEVEL=OFF` to silence it.
-
-**Secret hygiene.** The push token is registered as a redacted value, so it is replaced
-with `***REDACTED***` in every log line, in either format, even if it reaches a message.
-
-When running under Docker, cap log growth with a `logging:` block on the service
-(json-file, `max-size`, `max-file`); the example compose does this.
+The `/details` view logs each request (method, path, status, duration) through the same logger, and `AUTOGATUS_ACCESS_LOG_LEVEL=OFF` silences it. The push token is registered as a redacted value, so it shows up as `***REDACTED***` in every log line even if it reaches a message. Under Docker, cap the log size with a `logging:` block on the service (json-file, `max-size`, `max-file`), which the example compose does.
 
 ## Prior art
 
-- [Autokuma](https://github.com/BigBoot/AutoKuma) — the same idea for Uptime Kuma, via
-  Kuma's socket API.
-- [home-operations/gatus-sidecar](https://github.com/home-operations/gatus-sidecar) —
-  the same idea for Gatus but keyed off Kubernetes resources. autogatus is the Docker
-  (Compose / plain Docker) counterpart.
+- [Autokuma](https://github.com/BigBoot/AutoKuma), the same idea for Uptime Kuma, through Kuma's socket API.
+- [home-operations/gatus-sidecar](https://github.com/home-operations/gatus-sidecar), the same idea for Gatus but driven by Kubernetes resources. autogatus is the plain-Docker and Compose counterpart.
 
 ## License
 
-[Apache-2.0](LICENSE), matching Gatus. Permissive, with an explicit patent grant.
+[Apache-2.0](LICENSE), matching Gatus. Permissive, with a patent grant.
