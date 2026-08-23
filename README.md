@@ -162,6 +162,58 @@ and drops anything else with a warning:
 A label naming a provider that is not in the allowlist is dropped and logged at WARN,
 naming the endpoint and the provider.
 
+## Checks (reach what Gatus cannot)
+
+Gatus probes from its own vantage point, so it cannot check a headless container
+(no HTTP endpoint) or one on a network it cannot reach. autogatus already holds the
+Docker socket, so it can run the check itself and push the verdict as an external
+endpoint. This is the use case in Gatus issue #647 (monitoring things like
+`cloudflare-ddns` that have no web server), solved without Gatus needing shell
+support. Checks require container monitoring (`AUTOGATUS_MONITOR_CONTAINERS=true`).
+
+Add one or more checks per container with `autogatus.check.<id>.*` labels:
+
+| Label | Meaning |
+|-------|---------|
+| `autogatus.check.<id>.exec` | Command to run inside the container (via `/bin/sh -c`); exit 0 = healthy |
+| `autogatus.check.<id>.tcp` | `host:port` (or just `port`, host defaults to the container name) to TCP-connect |
+| `autogatus.check.<id>.name` | Endpoint name (default `<container>-<id>`) |
+| `autogatus.check.<id>.group` | Dashboard group (default the container's stack) |
+| `autogatus.check.<id>.interval` | Heartbeat interval for the endpoint |
+| `autogatus.check.<id>.timeout` | Check timeout in seconds (default 5) |
+| `autogatus.check.<id>.description` | Alert description |
+| `autogatus.check.<id>.alerts` | Comma list of Gatus providers (same routing as everything else) |
+
+Worked example (issue #647): a headless `cloudflare-ddns` container with no port to
+probe, checked by a command run inside it:
+
+```yaml
+services:
+  cloudflare-ddns:
+    image: someuser/cloudflare-ddns
+    labels:
+      autogatus.check.alive.exec: "pgrep -f ddns"   # up while the process runs
+      autogatus.check.alive.alerts: "custom"
+```
+
+Or a TCP check against a service on a network autogatus shares:
+
+```yaml
+    labels:
+      autogatus.check.api.tcp: "8080"
+```
+
+**Security (exec).** `exec` runs arbitrary commands inside containers. Note that a
+`:ro` Docker socket mount does NOT prevent this: the exec API is available regardless.
+So exec is gated twice: the per-container label AND a global opt-in
+`AUTOGATUS_EXEC_CHECKS=true` (default off). With it off, `exec` labels are ignored
+with a one-time warning; `tcp` checks are unaffected. Only enable it if you trust the
+labels on your containers.
+
+**TCP reachability.** A `tcp` check connects from autogatus's own network position, so
+autogatus must share a Docker network with the target. `exec` has no such limitation,
+since it goes through the Docker API rather than the network.
+
 ## Configuration
 
 | Env | Default | Meaning |
@@ -181,6 +233,7 @@ naming the endpoint and the provider.
 | `AUTOGATUS_MEM_THRESHOLD` | `95` | Fail over this % of memory limit (blank/`none` disables) |
 | `AUTOGATUS_CPU_THRESHOLD` | *(disabled)* | Fail over this CPU % if set |
 | `AUTOGATUS_EXCLUDE` | `autogatus,claude-code` | Comma-separated name substrings to skip |
+| `AUTOGATUS_EXEC_CHECKS` | `false` | Global opt-in for `autogatus.check.<id>.exec` (runs commands in containers) |
 | `AUTOGATUS_GATUS_CONFIG` | *(none)* | Path to Gatus's config (file or dir); derives the alert-provider allowlist |
 | `AUTOGATUS_ALERT_TYPES` | `custom` | Default alert channels for monitored containers, and allowlist fallback |
 | `AUTOGATUS_WEB` | `true` | Serve the `/details` detail view |

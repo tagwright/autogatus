@@ -62,6 +62,7 @@ PUSH_TOKEN = os.environ.get("AUTOGATUS_PUSH_TOKEN", "").strip()
 STACK_MAP_PATH = os.environ.get("AUTOGATUS_STACK_MAP", "")
 HEADLINE_METRIC = os.environ.get("AUTOGATUS_HEADLINE_METRIC", "mem_used_mb")
 HEARTBEAT_INTERVAL = os.environ.get("AUTOGATUS_HEARTBEAT_INTERVAL", "90s")
+EXEC_CHECKS = _bool("AUTOGATUS_EXEC_CHECKS", False)
 WEB = _bool("AUTOGATUS_WEB", True)
 WEB_PORT = int(os.environ.get("AUTOGATUS_WEB_PORT", "8080"))
 EXCLUDES = [x.strip() for x in os.environ.get(
@@ -147,8 +148,9 @@ def run() -> int:
         if WEB:
             _start_web(store)
         logger.info(
-            "container monitoring on: gatus=%s thresholds(mem=%s,cpu=%s) headline=%s excludes=%s",
-            GATUS_URL, MEM_THRESHOLD, CPU_THRESHOLD, HEADLINE_METRIC, EXCLUDES,
+            "container monitoring on: gatus=%s thresholds(mem=%s,cpu=%s) headline=%s "
+            "excludes=%s exec-checks=%s",
+            GATUS_URL, MEM_THRESHOLD, CPU_THRESHOLD, HEADLINE_METRIC, EXCLUDES, EXEC_CHECKS,
         )
 
     while _running:
@@ -174,6 +176,7 @@ def run() -> int:
                 default_group=DEFAULT_GROUP,
                 store=store,
                 default_alert_types=ALERT_TYPES or ["custom"],
+                exec_enabled=EXEC_CHECKS,
             )
 
         try:

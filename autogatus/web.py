@@ -89,9 +89,11 @@ def _e(s):
 
 
 def _status(verdict, health):
-    if health is None or health.state != "running":
+    # A container liveness snapshot that is not running is down regardless of
+    # verdict. Check endpoints have no health snapshot, so the verdict decides.
+    if health is not None and health.state != "running":
         return "unhealthy"
-    return "healthy" if verdict.success else "unhealthy"
+    return "healthy" if (verdict and verdict.success) else "unhealthy"
 
 
 def _badge(status):

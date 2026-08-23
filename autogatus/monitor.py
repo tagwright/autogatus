@@ -17,6 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from .alerts import build_alerts, filter_alerts, parse_type_list
+from .checks import parse_container_checks, run_check
 from .collector import collect_health
 from .health import Thresholds, evaluate
 
@@ -56,6 +57,7 @@ class ContainerMonitor:
         max_workers: int = 16,
         store=None,
         default_alert_types=None,
+        exec_enabled=False,
     ):
         self.client = client
         self.pusher = pusher
@@ -71,6 +73,8 @@ class ContainerMonitor:
         # Default alert channels for auto-monitored containers, overridable per
         # container via the autogatus.alerts label.
         self.default_alert_types = list(default_alert_types) if default_alert_types else ["custom"]
+        self.exec_enabled = exec_enabled
+        self._warned_exec_disabled = False
         self._seen_running = set()
         self._prev_restart = {}
 
@@ -159,6 +163,57 @@ class ContainerMonitor:
             verdicts.append((key, verdict))
             if self.store is not None:
                 self.store.update(key, stack, name, health, verdict, ts)
+
+        # Checks pass: exec/tcp probes autogatus runs and pushes. These are
+        # additional to liveness and apply to any container carrying the labels,
+        # even one excluded from liveness monitoring.
+        check_items = []
+        saw_disabled_exec = False
+        for c in containers:
+            checks, disabled = parse_container_checks(
+                c.labels or {},
+                c.name,
+                self._stack_for(c),
+                default_alert_types=self.default_alert_types,
+                default_interval=self.heartbeat_interval,
+                exec_enabled=self.exec_enabled,
+            )
+            saw_disabled_exec = saw_disabled_exec or disabled
+            for chk in checks:
+                check_items.append((chk, c))
+
+        if saw_disabled_exec and not self._warned_exec_disabled:
+            logger.warning(
+                "exec checks present but AUTOGATUS_EXEC_CHECKS is off; ignoring them "
+                "(exec runs commands in containers, so it is opt-in)")
+            self._warned_exec_disabled = True
+
+        def _run(item):
+            chk, c = item
+            return chk, run_check(chk, c)
+
+        check_results = []
+        if check_items:
+            workers = min(self.max_workers, len(check_items))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                check_results = list(pool.map(_run, check_items))
+
+        for chk, verdict in check_results:
+            key = _gatus_key(chk.group, chk.name)
+            decl = {
+                "name": chk.name,
+                "group": chk.group,
+                "token": self.token,
+                "heartbeat": {"interval": chk.interval},
+            }
+            requested = build_alerts(chk.alert_types or self.default_alert_types, chk.description)
+            alerts = filter_alerts(requested, allowlist, key) if allowlist is not None else requested
+            if alerts:
+                decl["alerts"] = alerts
+            declarations.append(decl)
+            verdicts.append((key, verdict))
+            if self.store is not None:
+                self.store.update(key, chk.group, chk.name, None, verdict, ts)
 
         if self.store is not None:
             self.store.prune({k for k, _ in verdicts})
