@@ -1,0 +1,12 @@
+[run]
+source = autogatus
+omit =
+    autogatus/__main__.py
+    autogatus/__init__.py
+
+[report]
+show_missing = True
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
