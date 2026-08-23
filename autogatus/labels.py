@@ -60,7 +60,7 @@ def _group_endpoint_labels(labels: dict) -> dict:
     for key, value in labels.items():
         if not key.startswith(PREFIX) or key == ENABLE_KEY:
             continue
-        remainder = key[len(PREFIX):]
+        remainder = key[len(PREFIX) :]
         if "." not in remainder:
             # e.g. "gatus.enable" already handled; a bare "gatus.foo" is not a
             # valid endpoint field, so skip it rather than guess.
@@ -86,7 +86,7 @@ def _collect_headers(fields: dict) -> dict:
     headers = {}
     for field, value in fields.items():
         if field.startswith("headers."):
-            headers[field[len("headers."):]] = value
+            headers[field[len("headers.") :]] = value
     return headers
 
 
@@ -106,7 +106,8 @@ def parse_container(labels: dict, container_name: str, default_group: str = "") 
         url = fields.get("url", "").strip()
         if not url:
             raise ValueError(
-                f"container '{container_name}': endpoint '{endpoint_id}' has no gatus.{endpoint_id}.url"
+                f"container '{container_name}': endpoint '{endpoint_id}' "
+                f"has no gatus.{endpoint_id}.url"
             )
 
         name = fields.get("name", endpoint_id).strip() or endpoint_id

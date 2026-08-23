@@ -76,6 +76,8 @@ class Writer:
         self._last_stable = stable
         logger.info(
             "wrote %d endpoint(s) + %d external endpoint(s) to %s",
-            len(endpoints), len(external_endpoints), self.output_path,
+            len(endpoints),
+            len(external_endpoints),
+            self.output_path,
         )
         return True

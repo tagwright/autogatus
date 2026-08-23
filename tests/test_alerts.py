@@ -12,7 +12,7 @@ from autogatus.alerts import (
 
 
 def test_parse_type_list():
-    assert parse_type_list(None) is None            # absent -> caller default
+    assert parse_type_list(None) is None  # absent -> caller default
     assert parse_type_list("none") == []
     assert parse_type_list("") == []
     assert parse_type_list("false") == []

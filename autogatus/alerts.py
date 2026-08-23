@@ -115,7 +115,8 @@ def filter_alerts(alerts, allowlist: set, context: str) -> list:
     if dropped:
         names = ",".join(a.get("type", "?") for a in dropped)
         logger.warning(
-            "alerts: dropping unconfigured provider(s) %s for %s "
-            "(not in Gatus alerting config)", names, context,
+            "alerts: dropping unconfigured provider(s) %s for %s (not in Gatus alerting config)",
+            names,
+            context,
         )
     return kept

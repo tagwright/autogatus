@@ -68,9 +68,14 @@ PUSH_TIMEOUT = float(os.environ.get("AUTOGATUS_PUSH_TIMEOUT", "15"))
 EXEC_CHECKS = _bool("AUTOGATUS_EXEC_CHECKS", False)
 WEB = _bool("AUTOGATUS_WEB", True)
 WEB_PORT = int(os.environ.get("AUTOGATUS_WEB_PORT", "8080"))
-EXCLUDES = [x.strip() for x in os.environ.get(
-    "AUTOGATUS_EXCLUDE", "autogatus,claude-code").split(",") if x.strip()]
-MEM_THRESHOLD = _float_or_none("AUTOGATUS_MEM_THRESHOLD") if "AUTOGATUS_MEM_THRESHOLD" in os.environ else 95.0
+EXCLUDES = [
+    x.strip()
+    for x in os.environ.get("AUTOGATUS_EXCLUDE", "autogatus,claude-code").split(",")
+    if x.strip()
+]
+MEM_THRESHOLD = (
+    _float_or_none("AUTOGATUS_MEM_THRESHOLD") if "AUTOGATUS_MEM_THRESHOLD" in os.environ else 95.0
+)
 CPU_THRESHOLD = _float_or_none("AUTOGATUS_CPU_THRESHOLD")
 
 # Alert routing: which Gatus providers each endpoint may fire. The allowlist is
@@ -95,6 +100,7 @@ def _start_web(store) -> None:
     from waitress import serve
 
     from .web import init
+
     app = init(store, access_log_level=ACCESS_LOG_LEVEL)
 
     def _serve():
@@ -137,7 +143,9 @@ def run() -> int:
 
     logger.info(
         "autogatus starting: output=%s interval=%ss monitor_containers=%s",
-        OUTPUT_PATH, INTERVAL, MONITOR,
+        OUTPUT_PATH,
+        INTERVAL,
+        MONITOR,
     )
 
     writer = Writer(OUTPUT_PATH)
@@ -153,14 +161,21 @@ def run() -> int:
         logger.info(
             "container monitoring on: gatus=%s thresholds(mem=%s,cpu=%s) headline=%s "
             "excludes=%s exec-checks=%s",
-            GATUS_URL, MEM_THRESHOLD, CPU_THRESHOLD, HEADLINE_METRIC, EXCLUDES, EXEC_CHECKS,
+            GATUS_URL,
+            MEM_THRESHOLD,
+            CPU_THRESHOLD,
+            HEADLINE_METRIC,
+            EXCLUDES,
+            EXEC_CHECKS,
         )
 
     while _running:
         try:
             client = docker.from_env()
             client.ping()
-            logger.info("connected to Docker daemon (engine %s)", client.version().get("Version", "?"))
+            logger.info(
+                "connected to Docker daemon (engine %s)", client.version().get("Version", "?")
+            )
         except Exception as e:
             logger.warning("cannot reach Docker (%s); retrying in %ss", e, INTERVAL)
             time.sleep(INTERVAL)
@@ -198,7 +213,9 @@ def _tick(client, writer: Writer, monitor) -> None:
     global _last_allowlist
     # Re-derive each cycle so adding a provider to Gatus self-heals with no
     # restart. Log only when the resolved set changes.
-    allowlist, source = resolve_allowlist(GATUS_CONFIG_PATH, ALERT_TYPES, skip_basename=OUTPUT_BASENAME)
+    allowlist, source = resolve_allowlist(
+        GATUS_CONFIG_PATH, ALERT_TYPES, skip_basename=OUTPUT_BASENAME
+    )
     if allowlist != _last_allowlist:
         logger.info("alert allowlist (%s): %s", source, ", ".join(sorted(allowlist)) or "(none)")
         _last_allowlist = allowlist
@@ -225,7 +242,10 @@ def _tick(client, writer: Writer, monitor) -> None:
         if wrote or failed:
             logger.info(
                 "reconcile: %d monitored, %d pushed, %d failed%s",
-                total, pushed, failed, ", config written" if wrote else "",
+                total,
+                pushed,
+                failed,
+                ", config written" if wrote else "",
             )
         else:
             logger.debug("reconcile: %d monitored, %d pushed (no change)", total, pushed)

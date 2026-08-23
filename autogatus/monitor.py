@@ -156,7 +156,9 @@ class ContainerMonitor:
                 "heartbeat": {"interval": self.heartbeat_interval},
             }
             requested = build_alerts(self._alert_types_for(c), f"{name} ({stack})")
-            alerts = filter_alerts(requested, allowlist, key) if allowlist is not None else requested
+            alerts = (
+                filter_alerts(requested, allowlist, key) if allowlist is not None else requested
+            )
             if alerts:
                 decl["alerts"] = alerts
             declarations.append(decl)
@@ -185,7 +187,8 @@ class ContainerMonitor:
         if saw_disabled_exec and not self._warned_exec_disabled:
             logger.warning(
                 "exec checks present but AUTOGATUS_EXEC_CHECKS is off; ignoring them "
-                "(exec runs commands in containers, so it is opt-in)")
+                "(exec runs commands in containers, so it is opt-in)"
+            )
             self._warned_exec_disabled = True
 
         def _run(item):
@@ -207,7 +210,9 @@ class ContainerMonitor:
                 "heartbeat": {"interval": chk.interval},
             }
             requested = build_alerts(chk.alert_types or self.default_alert_types, chk.description)
-            alerts = filter_alerts(requested, allowlist, key) if allowlist is not None else requested
+            alerts = (
+                filter_alerts(requested, allowlist, key) if allowlist is not None else requested
+            )
             if alerts:
                 decl["alerts"] = alerts
             declarations.append(decl)

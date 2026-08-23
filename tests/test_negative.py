@@ -22,8 +22,12 @@ class FakeContainer:
         self.status = status
         self.labels = labels or {}
         self.attrs = {
-            "State": {"Status": status, "ExitCode": 0, "OOMKilled": False,
-                      "StartedAt": "0001-01-01T00:00:00Z"},
+            "State": {
+                "Status": status,
+                "ExitCode": 0,
+                "OOMKilled": False,
+                "StartedAt": "0001-01-01T00:00:00Z",
+            },
             "RestartCount": restart_count,
         }
 
@@ -49,8 +53,13 @@ class FakeClient:
 
 def _monitor(client, store=None):
     return ContainerMonitor(
-        client=client, pusher=None, token="t", stack_map={},
-        thresholds=Thresholds(), excludes=[], store=store,
+        client=client,
+        pusher=None,
+        token="t",
+        stack_map={},
+        thresholds=Thresholds(),
+        excludes=[],
+        store=store,
     )
 
 
@@ -66,7 +75,7 @@ def test_monitor_keeps_container_seen_then_exited():
     # Gate: once seen running, a later exit is reported (a real crash), not dropped.
     c = FakeContainer("svc", status="running")
     m = _monitor(client=FakeClient([c]))
-    m.reconcile()                       # observed running
+    m.reconcile()  # observed running
     c.status = "exited"
     c.attrs["State"]["Status"] = "exited"
     _, verdicts = m.reconcile()
@@ -82,10 +91,10 @@ def test_monitor_prune_drops_removed_from_store():
     client = FakeClient([c])
     m = _monitor(client, store=store)
     m.reconcile()
-    assert store.all()                  # present
-    client._containers = []             # container removed
+    assert store.all()  # present
+    client._containers = []  # container removed
     m.reconcile()
-    assert store.all() == {}            # pruned
+    assert store.all() == {}  # pruned
 
 
 def test_gather_endpoints_skips_malformed_container():
@@ -94,4 +103,4 @@ def test_gather_endpoints_skips_malformed_container():
     bad = FakeContainer("bad", labels={"gatus.enable": "true", "gatus.web.interval": "5s"})
     eps = gather_endpoints(FakeClient([bad, good]))
     names = [e["name"] for e in eps]
-    assert names == ["web"]             # only the good one, no exception
+    assert names == ["web"]  # only the good one, no exception

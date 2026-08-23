@@ -10,10 +10,9 @@ can later back a Prometheus ``/metrics`` exporter without a rewrite.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
-def _bytes_h(n: Optional[float]) -> str:
+def _bytes_h(n: float | None) -> str:
     if n is None:
         return "?"
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -27,24 +26,24 @@ def _bytes_h(n: Optional[float]) -> str:
 class ContainerHealth:
     name: str
     stack: str
-    state: str                      # running | exited | restarting | created | paused | dead
-    exit_code: Optional[int] = None
+    state: str  # running | exited | restarting | created | paused | dead
+    exit_code: int | None = None
     oom_killed: bool = False
     restart_count: int = 0
-    health_status: Optional[str] = None       # healthy | unhealthy | starting | None
-    health_output: str = ""                   # last healthcheck log line, if any
-    cpu_percent: Optional[float] = None
-    mem_used: Optional[float] = None
-    mem_limit: Optional[float] = None
-    mem_percent: Optional[float] = None
-    uptime_seconds: Optional[int] = None
-    net_rx: Optional[float] = None
-    net_tx: Optional[float] = None
-    blk_read: Optional[float] = None
-    blk_write: Optional[float] = None
+    health_status: str | None = None  # healthy | unhealthy | starting | None
+    health_output: str = ""  # last healthcheck log line, if any
+    cpu_percent: float | None = None
+    mem_used: float | None = None
+    mem_limit: float | None = None
+    mem_percent: float | None = None
+    uptime_seconds: int | None = None
+    net_rx: float | None = None
+    net_tx: float | None = None
+    blk_read: float | None = None
+    blk_write: float | None = None
 
     @property
-    def mem_used_mb(self) -> Optional[float]:
+    def mem_used_mb(self) -> float | None:
         return round(self.mem_used / (1024 * 1024), 1) if self.mem_used is not None else None
 
 
@@ -53,9 +52,9 @@ class Thresholds:
     # None disables a check. Defaults: fail on memory pressure and crashloops
     # (real "this will fall over" signals); CPU is reported but not a failure by
     # default, since a busy container is not a broken one.
-    mem_percent: Optional[float] = 95.0
-    cpu_percent: Optional[float] = None
-    fail_on_restart: bool = True    # restart_count increased since last cycle
+    mem_percent: float | None = 95.0
+    cpu_percent: float | None = None
+    fail_on_restart: bool = True  # restart_count increased since last cycle
     fail_on_unhealthy: bool = True
 
 
@@ -63,14 +62,14 @@ class Thresholds:
 class Verdict:
     success: bool
     error: str
-    headline: Optional[float]       # the single number pushed as Gatus "duration"
+    headline: float | None  # the single number pushed as Gatus "duration"
     reasons: list = field(default_factory=list)
 
 
 def evaluate(
     h: ContainerHealth,
     thresholds: Thresholds,
-    prev_restart_count: Optional[int] = None,
+    prev_restart_count: int | None = None,
     headline_metric: str = "mem_percent",
 ) -> Verdict:
     reasons = []

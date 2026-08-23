@@ -1,3 +1,4 @@
 # Test/dev dependencies (runtime deps are in requirements.txt).
 pytest>=8.0
 pytest-cov>=5.0
+ruff>=0.6

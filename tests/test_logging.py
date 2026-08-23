@@ -49,8 +49,9 @@ def test_json_formatter_is_valid_json_with_fields():
 
 
 def test_json_formatter_includes_extras():
-    out = JsonFormatter().format(_record(
-        "access", extra={"http_method": "GET", "http_status": 200, "duration_ms": 1.5}))
+    out = JsonFormatter().format(
+        _record("access", extra={"http_method": "GET", "http_status": 200, "duration_ms": 1.5})
+    )
     obj = json.loads(out)
     assert obj["http_method"] == "GET"
     assert obj["http_status"] == 200
@@ -66,9 +67,13 @@ def test_redaction_text():
 
 def test_redaction_json_in_message_and_extra():
     register_secret("supersecrettoken123")
-    out = JsonFormatter().format(_record(
-        "token=%s", ("supersecrettoken123",),
-        extra={"detail": "leaked supersecrettoken123 here"}))
+    out = JsonFormatter().format(
+        _record(
+            "token=%s",
+            ("supersecrettoken123",),
+            extra={"detail": "leaked supersecrettoken123 here"},
+        )
+    )
     assert "supersecrettoken123" not in out
     assert "***REDACTED***" in out
 

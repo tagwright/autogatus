@@ -46,7 +46,10 @@ def _access_log(response):
     logger.log(
         _access_level,
         "access %s %s -> %s %.1fms",
-        request.method, request.path, response.status_code, duration_ms,
+        request.method,
+        request.path,
+        response.status_code,
+        duration_ms,
         extra={
             "http_method": request.method,
             "http_path": request.path,
@@ -58,6 +61,7 @@ def _access_log(response):
 
 
 # ── formatting helpers ────────────────────────────────────────────────────────
+
 
 def _bytes(n):
     if n is None:
@@ -144,6 +148,7 @@ def _card(title, value):
 
 # ── routes ────────────────────────────────────────────────────────────────────
 
+
 @app.route("/details")
 def index():
     items = _store.all() if _store else {}
@@ -168,7 +173,7 @@ def index():
             f'<div class="min-w-0"><div class="font-semibold truncate">{_e(it.get("name"))}</div>'
             f'<div class="text-xs text-muted-foreground truncate">{_e(stack)}</div>'
             f'<div class="text-xs text-muted-foreground mt-1">cpu {cpu_txt} · mem {mem_txt}</div></div>'
-            f'{_badge(status)}</div></a>'
+            f"{_badge(status)}</div></a>"
         )
 
     sel = "text-sm bg-background border rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-ring"
@@ -201,9 +206,11 @@ def index():
         'hover:text-foreground mb-4">&larr; Back to Dashboard</a>'
         '<h1 class="text-4xl font-bold tracking-tight">Container Details</h1>'
         f'<p class="text-muted-foreground mt-2"><span id="ag-count">{len(items)}</span> of '
-        f'{len(items)} containers</p></div>'
+        f"{len(items)} containers</p></div>"
     )
-    grid = f'<div id="ag-grid" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{"".join(cards)}</div>'
+    grid = (
+        f'<div id="ag-grid" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{"".join(cards)}</div>'
+    )
     empty = '<p id="ag-empty" class="text-muted-foreground text-center py-12" style="display:none">No containers match.</p>'
     return _page("Container Details", header + controls + grid + empty + _INDEX_JS)
 
@@ -257,14 +264,14 @@ def detail(key):
   <a href="/details" class="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-4">&larr; Back to Container Details</a>
   <div class="space-y-6">
     <div class="flex items-start justify-between">
-      <div><h1 class="text-4xl font-bold tracking-tight">{_e(it.get('name'))}</h1>
-        <div class="text-muted-foreground mt-2">Group: {_e(it.get('stack'))}</div></div>
+      <div><h1 class="text-4xl font-bold tracking-tight">{_e(it.get("name"))}</h1>
+        <div class="text-muted-foreground mt-2">Group: {_e(it.get("stack"))}</div></div>
       {_badge(status)}
     </div>
     {cards}
     <div class="rounded-lg border bg-card text-card-foreground shadow-sm">
       <div class="flex flex-col space-y-1.5 p-6"><h3 class="text-2xl font-semibold leading-none tracking-tight">Recent Checks</h3></div>
-      <div class="p-6 pt-0">{_squares(it.get('history', []))}</div>
+      <div class="p-6 pt-0">{_squares(it.get("history", []))}</div>
     </div>
     <div class="rounded-lg border bg-card text-card-foreground shadow-sm">
       <div class="flex flex-col space-y-1.5 p-6"><h3 class="text-2xl font-semibold leading-none tracking-tight">Details</h3></div>

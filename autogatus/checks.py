@@ -26,11 +26,9 @@ AUTOGATUS_EXEC_CHECKS opt-in as well as the per-container label.
 from __future__ import annotations
 
 import logging
-import re
 import socket
 import threading
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 from .health import Verdict
 
@@ -43,13 +41,13 @@ DEFAULT_TIMEOUT = 5.0
 @dataclass
 class Check:
     id: str
-    kind: str                       # "exec" | "tcp"
-    target: str                     # command, or "host:port"
+    kind: str  # "exec" | "tcp"
+    target: str  # command, or "host:port"
     name: str
     group: str
     interval: str
     description: str
-    alert_types: Optional[list] = None
+    alert_types: list | None = None
     timeout: float = DEFAULT_TIMEOUT
     tcp_host: str = ""
     tcp_port: int = 0
@@ -61,7 +59,7 @@ def _bucket(labels: dict) -> dict:
     for k, v in (labels or {}).items():
         if not k.startswith(PREFIX):
             continue
-        rest = k[len(PREFIX):]
+        rest = k[len(PREFIX) :]
         if "." not in rest:
             continue
         cid, field_name = rest.split(".", 1)
@@ -114,6 +112,7 @@ def parse_container_checks(
         alert_types = None
         if "alerts" in fields:
             from .alerts import parse_type_list
+
             alert_types = parse_type_list(fields.get("alerts"))
         if alert_types is None and default_alert_types is not None:
             alert_types = list(default_alert_types)
@@ -122,28 +121,50 @@ def parse_container_checks(
             if not exec_enabled:
                 saw_disabled_exec = True
                 continue
-            checks.append(Check(
-                id=cid, kind="exec", target=str(fields["exec"]).strip(),
-                name=name, group=group, interval=interval, description=description,
-                alert_types=alert_types, timeout=timeout,
-            ))
+            checks.append(
+                Check(
+                    id=cid,
+                    kind="exec",
+                    target=str(fields["exec"]).strip(),
+                    name=name,
+                    group=group,
+                    interval=interval,
+                    description=description,
+                    alert_types=alert_types,
+                    timeout=timeout,
+                )
+            )
         elif "tcp" in fields and str(fields.get("tcp")).strip():
             parsed = _parse_tcp(str(fields["tcp"]), container_name)
             if parsed is None:
                 logger.warning(
                     "check %s on %s: malformed tcp target %r, skipping",
-                    cid, container_name, fields.get("tcp"),
+                    cid,
+                    container_name,
+                    fields.get("tcp"),
                 )
                 continue
             host, port = parsed
-            checks.append(Check(
-                id=cid, kind="tcp", target=f"{host}:{port}",
-                name=name, group=group, interval=interval, description=description,
-                alert_types=alert_types, timeout=timeout, tcp_host=host, tcp_port=port,
-            ))
+            checks.append(
+                Check(
+                    id=cid,
+                    kind="tcp",
+                    target=f"{host}:{port}",
+                    name=name,
+                    group=group,
+                    interval=interval,
+                    description=description,
+                    alert_types=alert_types,
+                    timeout=timeout,
+                    tcp_host=host,
+                    tcp_port=port,
+                )
+            )
         else:
             logger.warning(
-                "check %s on %s: no exec or tcp target, skipping", cid, container_name,
+                "check %s on %s: no exec or tcp target, skipping",
+                cid,
+                container_name,
             )
     return checks, saw_disabled_exec
 
@@ -172,6 +193,7 @@ def _with_timeout(fn, timeout):
 def evaluate_exec(container, command: str, timeout: float):
     """Run ``command`` in ``container`` via /bin/sh. exit 0 = success. The
     container needs a shell for this (most non-scratch images have one)."""
+
     def _do():
         return container.exec_run(["/bin/sh", "-c", command], demux=False)
 

@@ -9,8 +9,8 @@ from autogatus.checks import (
     run_check,
 )
 
-
 # ── label parsing ─────────────────────────────────────────────────────────────
+
 
 def test_no_check_labels_yields_nothing():
     checks, disabled = parse_container_checks({}, "svc", "mystack")
@@ -24,10 +24,10 @@ def test_tcp_check_defaults():
     assert len(checks) == 1
     c = checks[0]
     assert c.kind == "tcp"
-    assert c.tcp_host == "whoami"      # host defaults to container name
+    assert c.tcp_host == "whoami"  # host defaults to container name
     assert c.tcp_port == 80
-    assert c.name == "whoami-web"      # default <container>-<id>
-    assert c.group == "web-stack"      # default = stack
+    assert c.name == "whoami-web"  # default <container>-<id>
+    assert c.group == "web-stack"  # default = stack
 
 
 def test_tcp_host_port_form():
@@ -89,7 +89,7 @@ def test_multiple_checks_per_container_distinct_ids():
     }
     checks, _ = parse_container_checks(labels, "app", "s")
     names = sorted(c.name for c in checks)
-    assert names == ["app-metrics", "app-web"]     # no collision
+    assert names == ["app-metrics", "app-web"]  # no collision
 
 
 def test_check_missing_target_skipped():
@@ -106,6 +106,7 @@ def test_parse_tcp_helper():
 
 
 # ── execution / verdicts ──────────────────────────────────────────────────────
+
 
 def test_evaluate_exec_success():
     res = MagicMock(exit_code=0, output=b"ok\n")
@@ -135,8 +136,17 @@ def test_evaluate_tcp_failure_on_closed_port():
 
 
 def test_run_check_wraps_verdict():
-    chk = Check(id="c", kind="tcp", target="127.0.0.1:1", name="n", group="g",
-                interval="90s", description="d", tcp_host="127.0.0.1", tcp_port=1)
+    chk = Check(
+        id="c",
+        kind="tcp",
+        target="127.0.0.1:1",
+        name="n",
+        group="g",
+        interval="90s",
+        description="d",
+        tcp_host="127.0.0.1",
+        tcp_port=1,
+    )
     v = run_check(chk, MagicMock())
     assert v.success is False
     assert v.error.startswith("check failed: tcp")
@@ -147,8 +157,9 @@ def test_run_check_exec_success_verdict():
     res = MagicMock(exit_code=0, output=b"")
     container = MagicMock()
     container.exec_run.return_value = res
-    chk = Check(id="c", kind="exec", target="true", name="n", group="g",
-                interval="90s", description="d")
+    chk = Check(
+        id="c", kind="exec", target="true", name="n", group="g", interval="90s", description="d"
+    )
     v = run_check(chk, container)
     assert v.success is True
     assert v.error.startswith("exec ")

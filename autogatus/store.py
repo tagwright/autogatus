@@ -42,7 +42,4 @@ class Store:
 
     def all(self):
         with self._lock:
-            return {
-                k: dict(v, history=list(v["history"]))
-                for k, v in self._items.items()
-            }
+            return {k: dict(v, history=list(v["history"])) for k, v in self._items.items()}

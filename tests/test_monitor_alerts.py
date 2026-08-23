@@ -9,8 +9,13 @@ class FakeContainer:
 
 def _monitor(default_alert_types):
     return ContainerMonitor(
-        client=None, pusher=None, token="t", stack_map={}, thresholds=None,
-        excludes=[], default_alert_types=default_alert_types,
+        client=None,
+        pusher=None,
+        token="t",
+        stack_map={},
+        thresholds=None,
+        excludes=[],
+        default_alert_types=default_alert_types,
     )
 
 
@@ -21,7 +26,10 @@ def test_default_alert_types_when_no_label():
 
 def test_label_overrides_default():
     m = _monitor(["custom"])
-    assert m._alert_types_for(FakeContainer({"autogatus.alerts": "ntfy,discord"})) == ["ntfy", "discord"]
+    assert m._alert_types_for(FakeContainer({"autogatus.alerts": "ntfy,discord"})) == [
+        "ntfy",
+        "discord",
+    ]
 
 
 def test_label_none_disables():

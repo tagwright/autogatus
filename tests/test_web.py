@@ -1,5 +1,5 @@
-from autogatus.web import _bytes, _uptime, _badge, _status
 from autogatus.health import ContainerHealth, Verdict
+from autogatus.web import _badge, _bytes, _status, _uptime
 
 
 def test_bytes_formatting():

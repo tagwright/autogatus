@@ -23,7 +23,7 @@ def _uptime_seconds(started_at: str):
             tz = ""
             for marker in ("+", "-"):
                 if marker in tail[6:]:
-                    tz = tail[6:][tail[6:].index(marker):]
+                    tz = tail[6:][tail[6:].index(marker) :]
                     break
             if tail.endswith("+00:00"):
                 tz = "+00:00"

@@ -12,3 +12,16 @@ autogatus = "autogatus.__main__:run"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "B", "UP", "C4"]
+
+[tool.ruff.lint.per-file-ignores]
+# web.py composes HTML string fragments (Tailwind class lists, inline templates);
+# wrapping them to satisfy the line limit hurts readability and, inside the
+# triple-quoted blocks, would inject newlines into the rendered output.
+"autogatus/web.py" = ["E501"]

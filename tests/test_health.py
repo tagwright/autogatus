@@ -1,9 +1,17 @@
-from autogatus.health import ContainerHealth, Thresholds, Verdict, evaluate
+from autogatus.health import ContainerHealth, Thresholds, evaluate
 
 
 def _h(**kw):
-    base = dict(name="x", stack="s", state="running", restart_count=0,
-                cpu_percent=5.0, mem_used=100, mem_limit=1000, mem_percent=10.0)
+    base = {
+        "name": "x",
+        "stack": "s",
+        "state": "running",
+        "restart_count": 0,
+        "cpu_percent": 5.0,
+        "mem_used": 100,
+        "mem_limit": 1000,
+        "mem_percent": 10.0,
+    }
     base.update(kw)
     return ContainerHealth(**base)
 
@@ -73,9 +81,13 @@ def test_headline_metric_selectable():
 
 def test_gatus_key_matches_gatus_sanitization():
     from autogatus.monitor import _gatus_key
+
     # underscores in the group become hyphens in the key (Gatus behaviour)
     assert _gatus_key("ad_blocker", "adguard") == "ad-blocker_adguard"
-    assert _gatus_key("photo_processing", "photo_processing_ui") == "photo-processing_photo-processing-ui"
+    assert (
+        _gatus_key("photo_processing", "photo_processing_ui")
+        == "photo-processing_photo-processing-ui"
+    )
     assert _gatus_key("authentik", "authentik-db") == "authentik_authentik-db"
 
 

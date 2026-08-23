@@ -1,6 +1,6 @@
 import pytest
 
-from autogatus.labels import parse_container, is_enabled
+from autogatus.labels import is_enabled, parse_container
 
 
 def test_disabled_container_yields_nothing():
@@ -18,14 +18,16 @@ def test_enable_variants():
 def test_minimal_http_endpoint_defaults():
     labels = {"gatus.enable": "true", "gatus.web.url": "http://svc:3000/"}
     eps = parse_container(labels, container_name="geoducking")
-    assert eps == [{
-        "name": "web",
-        "group": "geoducking",          # defaults to container name
-        "url": "http://svc:3000/",
-        "interval": "60s",
-        "conditions": ["[STATUS] == 200"],  # http default
-        "alerts": [{"type": "custom", "description": "web is down"}],
-    }]
+    assert eps == [
+        {
+            "name": "web",
+            "group": "geoducking",  # defaults to container name
+            "url": "http://svc:3000/",
+            "interval": "60s",
+            "conditions": ["[STATUS] == 200"],  # http default
+            "alerts": [{"type": "custom", "description": "web is down"}],
+        }
+    ]
 
 
 def test_tcp_default_condition():

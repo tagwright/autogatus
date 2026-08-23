@@ -5,10 +5,20 @@ from autogatus.render import render, render_stable
 
 def _sample():
     return [
-        {"name": "b", "group": "z", "url": "http://b/", "interval": "60s",
-         "conditions": ["[STATUS] == 200"]},
-        {"name": "a", "group": "a", "url": "http://a/", "interval": "60s",
-         "conditions": ["[STATUS] == 200"]},
+        {
+            "name": "b",
+            "group": "z",
+            "url": "http://b/",
+            "interval": "60s",
+            "conditions": ["[STATUS] == 200"],
+        },
+        {
+            "name": "a",
+            "group": "a",
+            "url": "http://a/",
+            "interval": "60s",
+            "conditions": ["[STATUS] == 200"],
+        },
     ]
 
 
