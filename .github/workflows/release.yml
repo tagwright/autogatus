@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format
+        run: ruff format --check .
+
+      - name: Mypy
+        run: mypy autogatus
+
+      - name: Pytest
+        run: pytest -q
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract release notes
+        run: awk '/^## /{c++} c==1' CHANGELOG.md > RELEASE_NOTES.md
+
+      # PEP 440 pre-release tags end in aN, bN, or rcN. Mark the GitHub release
+      # as a pre-release for those, and as a full release for anything else, so
+      # future stable tags publish normally without a code change here.
+      - name: Determine prerelease
+        id: prerelease
+        run: |
+          if echo "${GITHUB_REF_NAME}" | grep -Eq 'b[0-9]+$|a[0-9]+$|rc[0-9]+$'; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/techgaud/autogatus
+          # Tag the image with the exact git tag and with latest. latest is
+          # forced on for this first release because the README points people at
+          # :latest, so it must resolve. Once a stable (non pre-release) version
+          # exists, point latest at stable instead of tracking every tag.
+          tags: |
+            type=raw,value=${{ github.ref_name }}
+            type=raw,value=latest
+          flavor: |
+            latest=true
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ steps.prerelease.outputs.value }}
+          generate_release_notes: false
+          body_path: RELEASE_NOTES.md

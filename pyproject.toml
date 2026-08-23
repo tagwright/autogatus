@@ -1,6 +1,6 @@
 [project]
 name = "autogatus"
-version = "0.1.0"
+version = "0.1.0b1"
 description = "Docker-label service discovery for Gatus. Autokuma, but for Gatus."
 readme = "README.md"
 license = { text = "Apache-2.0" }
