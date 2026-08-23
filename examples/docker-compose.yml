@@ -33,6 +33,11 @@ services:
       # section; labels only pick which configured providers fire.
       # AUTOGATUS_GATUS_CONFIG: /gatus-config   # path to Gatus config (file or dir)
       # AUTOGATUS_ALERT_TYPES: custom           # default channels; unset -> custom
+      # Checks: run exec/tcp probes and push the verdict (for headless or
+      # network-isolated containers a central Gatus can't reach). exec runs a
+      # command IN the container, so it is gated behind this opt-in. Note: the
+      # Docker socket grants exec regardless of the :ro mount above.
+      # AUTOGATUS_EXEC_CHECKS: "true"           # allow autogatus.check.<id>.exec labels
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro   # read-only socket
       - gatus-generated:/output
@@ -52,6 +57,13 @@ services:
       gatus.web.conditions.0: "[STATUS] == 200"
       gatus.web.conditions.1: "[RESPONSE_TIME] < 300"
       gatus.web.alerts: "custom"     # fire these Gatus providers (must be configured in Gatus)
+
+  # A headless container with no HTTP endpoint: autogatus runs the check and
+  # pushes the verdict (needs AUTOGATUS_EXEC_CHECKS=true for exec).
+  cloudflare-ddns:
+    image: favonia/cloudflare-ddns
+    labels:
+      autogatus.check.alive.exec: "pgrep -f cloudflare-ddns"   # exit 0 = healthy
 
 volumes:
   gatus-generated:
