@@ -62,6 +62,9 @@ PUSH_TOKEN = os.environ.get("AUTOGATUS_PUSH_TOKEN", "").strip()
 STACK_MAP_PATH = os.environ.get("AUTOGATUS_STACK_MAP", "")
 HEADLINE_METRIC = os.environ.get("AUTOGATUS_HEADLINE_METRIC", "mem_used_mb")
 HEARTBEAT_INTERVAL = os.environ.get("AUTOGATUS_HEARTBEAT_INTERVAL", "90s")
+# Push HTTP timeout. Generous by default: a slow disk (raid scrub, backup window)
+# can stall Gatus for several seconds, and a timed-out push is a missed heartbeat.
+PUSH_TIMEOUT = float(os.environ.get("AUTOGATUS_PUSH_TIMEOUT", "15"))
 EXEC_CHECKS = _bool("AUTOGATUS_EXEC_CHECKS", False)
 WEB = _bool("AUTOGATUS_WEB", True)
 WEB_PORT = int(os.environ.get("AUTOGATUS_WEB_PORT", "8080"))
@@ -166,7 +169,7 @@ def run() -> int:
         if MONITOR:
             monitor = ContainerMonitor(
                 client=client,
-                pusher=GatusPusher(GATUS_URL, token),
+                pusher=GatusPusher(GATUS_URL, token, timeout=PUSH_TIMEOUT),
                 token=token,
                 stack_map=load_stack_map(STACK_MAP_PATH),
                 thresholds=Thresholds(mem_percent=MEM_THRESHOLD, cpu_percent=CPU_THRESHOLD),

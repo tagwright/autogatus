@@ -10,7 +10,7 @@ logger = logging.getLogger("autogatus")
 
 
 class GatusPusher:
-    def __init__(self, base_url: str, token: str, timeout: float = 5.0):
+    def __init__(self, base_url: str, token: str, timeout: float = 15.0):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout

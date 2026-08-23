@@ -227,6 +227,7 @@ since it goes through the Docker API rather than the network.
 | `AUTOGATUS_MONITOR_CONTAINERS` | `false` | Enable container monitoring (Tier 2) |
 | `AUTOGATUS_GATUS_URL` | `http://gatus:8080` | Gatus base URL for pushes |
 | `AUTOGATUS_PUSH_TOKEN` | *(generated)* | Bearer token; auto-generated and persisted if unset |
+| `AUTOGATUS_PUSH_TIMEOUT` | `15` | Seconds to wait on a single push before giving up |
 | `AUTOGATUS_STACK_MAP` | *(none)* | Path to a `{service: stack}` YAML for grouping |
 | `AUTOGATUS_HEADLINE_METRIC` | `mem_used_mb` | Graphed metric: `mem_used_mb`, `mem_percent`, `cpu_percent` |
 | `AUTOGATUS_HEARTBEAT_INTERVAL` | `90s` | No push within this -> Gatus marks the container down |
