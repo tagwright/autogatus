@@ -16,9 +16,10 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from .alerts import build_alerts, filter_alerts, parse_type_list
-from .checks import parse_container_checks, parse_duration_seconds, run_check
+from .alerts import build_alerts, filter_alerts, parse_alerts
+from .checks import parse_container_checks, run_check
 from .collector import collect_health
+from .duration import parse_duration_seconds
 from .health import Thresholds, evaluate
 
 logger = logging.getLogger("autogatus")
@@ -106,12 +107,29 @@ class ContainerMonitor:
             return _safe(self.default_group)
         return _safe(container.name)
 
-    def _alert_types_for(self, container) -> list:
-        """Resolve a container's requested alert channels: its autogatus.alerts
-        label if present, else the global default."""
-        label = (container.labels or {}).get(ALERTS_LABEL)
-        requested = parse_type_list(label)
-        return requested if requested is not None else list(self.default_alert_types)
+    @staticmethod
+    def _container_alert_fields(labels: dict) -> dict:
+        """Pull the autogatus.alerts config (scalar and indexed) into a field
+        dict parse_alerts understands, keyed without the autogatus. prefix."""
+        out = {}
+        for k, v in (labels or {}).items():
+            if k == ALERTS_LABEL or k.startswith(ALERTS_LABEL + "."):
+                out[k[len("autogatus.") :]] = v
+        return out
+
+    def _alerts_for(self, container) -> list:
+        """Resolve a container's requested alerts as full Gatus alert dicts: its
+        autogatus.alerts (shorthand or structured) if present, else the global
+        default expanded from AUTOGATUS_ALERT_TYPES."""
+        name = container.name
+        stack = self._stack_for(container)
+        fields = self._container_alert_fields(container.labels or {})
+        alerts = parse_alerts(
+            fields, default_description=f"{name} ({stack})", context=f"container {name}"
+        )
+        if alerts is None:
+            alerts = build_alerts(self.default_alert_types, f"{name} ({stack})")
+        return alerts
 
     def reconcile(self, allowlist=None):
         """Return ``(declarations, verdicts)``.
@@ -174,7 +192,7 @@ class ContainerMonitor:
                 "token": self.token,
                 "heartbeat": {"interval": self.heartbeat_interval},
             }
-            requested = build_alerts(self._alert_types_for(c), f"{name} ({stack})")
+            requested = self._alerts_for(c)
             alerts = (
                 filter_alerts(requested, allowlist, key) if allowlist is not None else requested
             )
@@ -199,7 +217,7 @@ class ContainerMonitor:
                 c.labels or {},
                 c.name,
                 self._stack_for(c),
-                default_alert_types=self._alert_types_for(c),
+                default_alerts=self._alerts_for(c),
                 default_interval=default_check_interval,
                 exec_enabled=self.exec_enabled,
             )
@@ -244,7 +262,7 @@ class ContainerMonitor:
                 "token": self.token,
                 "heartbeat": {"interval": heartbeat},
             }
-            requested = build_alerts(chk.alert_types or [], chk.description)
+            requested = chk.alerts or []
             alerts = (
                 filter_alerts(requested, allowlist, key) if allowlist is not None else requested
             )

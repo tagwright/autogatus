@@ -91,3 +91,84 @@ def test_filter_alerts_all_kept():
 def test_build_alerts_sanitizes():
     a = build_alerts(["custom"], 'we"ird\\name')
     assert a == [{"type": "custom", "description": "weirdname"}]
+
+
+# ── parse_alerts: shorthand, structured, precedence ───────────────────────────
+
+from autogatus.alerts import parse_alerts  # noqa: E402
+
+
+def test_parse_alerts_absent_and_silenced():
+    assert parse_alerts({}, "d") is None
+    assert parse_alerts({"alerts": "none"}, "d") == []
+
+
+def test_parse_alerts_shorthand_expands():
+    got = parse_alerts({"alerts": "custom,ntfy"}, "x is down")
+    assert got == [
+        {"type": "custom", "description": "x is down"},
+        {"type": "ntfy", "description": "x is down"},
+    ]
+
+
+def test_parse_alerts_shorthand_uses_alert_description():
+    got = parse_alerts({"alerts": "custom", "alert-description": "boom"}, "d")
+    assert got[0]["description"] == "boom"
+
+
+def test_parse_alerts_structured_all_fields():
+    got = parse_alerts(
+        {
+            "alerts.0.type": "ntfy",
+            "alerts.0.failure-threshold": "5",
+            "alerts.0.success-threshold": "2",
+            "alerts.0.send-on-resolved": "true",
+            "alerts.0.description": "db down",
+        },
+        "unused",
+    )
+    assert got == [
+        {
+            "type": "ntfy",
+            "failure-threshold": 5,
+            "success-threshold": 2,
+            "send-on-resolved": True,
+            "description": "db down",
+        }
+    ]
+
+
+def test_parse_alerts_structured_wins_over_scalar():
+    got = parse_alerts({"alerts": "custom", "alerts.0.type": "ntfy"}, "d")
+    assert got == [{"type": "ntfy", "description": "d"}]
+
+
+def test_parse_alerts_bad_int_field_ignored_alert_kept():
+    got = parse_alerts({"alerts.0.type": "ntfy", "alerts.0.failure-threshold": "abc"}, "d")
+    assert got == [{"type": "ntfy", "description": "d"}]
+
+
+def test_parse_alerts_bool_variants():
+    assert (
+        parse_alerts({"alerts.0.type": "c", "alerts.0.send-on-resolved": "no"}, "d")[0][
+            "send-on-resolved"
+        ]
+        is False
+    )
+
+
+def test_parse_alerts_missing_type_skips_that_alert():
+    assert parse_alerts({"alerts.0.failure-threshold": "5"}, "d") == []
+
+
+def test_parse_alerts_structured_description_sanitized():
+    got = parse_alerts({"alerts.0.type": "c", "alerts.0.description": 'we"ird\\x'}, "d")
+    assert got[0]["description"] == "weirdx"
+
+
+def test_filter_alerts_keeps_structured_options():
+    from autogatus.alerts import filter_alerts
+
+    alerts = [{"type": "ntfy", "failure-threshold": 5, "description": "d"}]
+    kept = filter_alerts(alerts, {"ntfy"}, "ctx")
+    assert kept == alerts  # structured options survive the allowlist filter

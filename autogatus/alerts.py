@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 import yaml
 
@@ -98,6 +99,98 @@ def resolve_allowlist(gatus_config_path: str, env_types: list, skip_basename: st
 def build_alerts(types, description: str) -> list:
     """Build a list of Gatus alert dicts from provider type names."""
     desc = sanitize_description(description)
+    return [{"type": t, "description": desc} for t in types]
+
+
+# Gatus alert-object option fields, by coerced type. Anything else under
+# alerts.<n>.* is passed through as a stripped string so future Gatus options
+# work without a code change here.
+_ALERT_INT_FIELDS = {"failure-threshold", "success-threshold", "minimum-reminder-interval"}
+_ALERT_BOOL_FIELDS = {"send-on-resolved", "enabled"}
+_BOOL_TRUE = {"true", "1", "yes", "on"}
+_BOOL_FALSE = {"false", "0", "no", "off"}
+_INDEXED = re.compile(r"alerts\.(\d+)\.(.+)")
+
+
+def _collect_indexed_alerts(fields: dict) -> dict:
+    """Return ``{index: {subfield: value}}`` for ``alerts.<n>.<subfield>`` keys."""
+    out: dict[int, dict] = {}
+    for key, value in fields.items():
+        m = _INDEXED.fullmatch(str(key))
+        if m:
+            out.setdefault(int(m.group(1)), {})[m.group(2)] = value
+    return out
+
+
+def _build_structured(indexed: dict, default_description: str, context: str) -> list:
+    alerts = []
+    for idx in sorted(indexed):
+        sub = indexed[idx]
+        atype = str(sub.get("type", "")).strip()
+        if not atype:
+            logger.warning("alerts: %s: alert %d has no type, skipping it", context, idx)
+            continue
+        alert: dict = {"type": atype}
+        for field, raw in sub.items():
+            if field == "type":
+                continue
+            if field in _ALERT_INT_FIELDS:
+                try:
+                    alert[field] = int(str(raw).strip())
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "alerts: %s: alert %d %s=%r is not an int, ignoring the field",
+                        context,
+                        idx,
+                        field,
+                        raw,
+                    )
+            elif field in _ALERT_BOOL_FIELDS:
+                low = str(raw).strip().lower()
+                if low in _BOOL_TRUE:
+                    alert[field] = True
+                elif low in _BOOL_FALSE:
+                    alert[field] = False
+                else:
+                    logger.warning(
+                        "alerts: %s: alert %d %s=%r is not a bool, ignoring the field",
+                        context,
+                        idx,
+                        field,
+                        raw,
+                    )
+            elif field == "description":
+                alert[field] = sanitize_description(str(raw))
+            else:
+                alert[field] = str(raw).strip()
+        alert.setdefault("description", sanitize_description(default_description))
+        alerts.append(alert)
+    return alerts
+
+
+def parse_alerts(fields: dict, default_description: str, context: str = "alerts"):
+    """Resolve one site's alert config into a list of Gatus alert dicts.
+
+    Two forms are accepted at the same site:
+      - structured: ``alerts.<n>.type`` plus ``.failure-threshold``,
+        ``.success-threshold``, ``.send-on-resolved``, ``.description``
+      - shorthand: ``alerts=custom,ntfy`` (each type gets a default alert)
+    Structured wins when any ``alerts.<n>.*`` keys are present. Returns ``None``
+    when no alert config is present (the caller applies its default), ``[]`` when
+    explicitly silenced with a ``none`` scalar, or a list of alert dicts.
+    """
+    indexed = _collect_indexed_alerts(fields)
+    if indexed:
+        return _build_structured(indexed, default_description, context)
+    types = parse_type_list(fields.get("alerts"))
+    if types is None:
+        return None
+    if not types:
+        return []
+    raw_desc = fields.get("alert-description")
+    desc = sanitize_description(
+        str(raw_desc).strip() if raw_desc not in (None, "") else default_description
+    )
     return [{"type": t, "description": desc} for t in types]
 
 

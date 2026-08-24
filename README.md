@@ -54,7 +54,7 @@ A container is ignored unless it sets `gatus.enable=true`. Each endpoint gets an
 | `gatus.<id>.method` | - | HTTP method |
 | `gatus.<id>.body` | - | HTTP request body |
 | `gatus.<id>.headers.<Name>` | - | HTTP header, repeatable |
-| `gatus.<id>.alerts` | `custom` | Comma list of Gatus providers like `custom,ntfy`. `none` silences it |
+| `gatus.<id>.alerts` | `custom` | Gatus providers, shorthand or structured (see Alert routing). `none` silences it |
 | `gatus.<id>.alert-description` | `<name> is down` | Alert description |
 
 Conditions pass through to Gatus untouched, so anything Gatus understands (`[BODY].x`, `[CERTIFICATE_EXPIRATION]`, and the rest) works. Provider selection is covered under Alert routing.
@@ -95,6 +95,18 @@ autogatus writes the `alerts:` block on each endpoint and names Gatus providers 
 - **Tier 1** (labeled endpoints): `gatus.<id>.alerts=custom,ntfy` sets the providers for that endpoint. Leave it off and you get a single `custom` alert. `none` turns alerts off.
 - **Tier 2** (monitored containers): the default comes from `AUTOGATUS_ALERT_TYPES` (or `custom` if you leave it unset), overridable per container with `autogatus.alerts=ntfy,custom` (`none` silences one container). A container's `autogatus.alerts` also cascades to its `autogatus.check.<id>` checks that do not set their own `.alerts`, so setting it once covers the container and its checks.
 
+The comma list is the shorthand. Each type becomes a Gatus alert with its provider defaults. When you need per-alert options, use the structured form at the same site, and it wins over the shorthand:
+
+```yaml
+labels:
+  gatus.web.alerts.0.type: "ntfy"
+  gatus.web.alerts.0.failure-threshold: "5"
+  gatus.web.alerts.0.send-on-resolved: "true"
+  gatus.web.alerts.1.type: "custom"
+```
+
+The per-alert keys are Gatus's own: `type`, `failure-threshold`, `success-threshold`, `send-on-resolved`, `description`. For the shorthand, `gatus.<id>.alert-description` (and the check equivalent) sets the description. For the structured form, each alert's own `.description` wins. Anything you do not set, Gatus fills from its per-provider `default-alert`.
+
 A provider only fires if it is configured in Gatus's own `alerting:` section. autogatus names providers, it does not define them, so a label pointing at a provider Gatus has never heard of would be a dead alert. To catch that, autogatus builds an allowlist of the providers Gatus actually has configured and drops anything outside it:
 
 - Set `AUTOGATUS_GATUS_CONFIG` to Gatus's config file or directory, mounted read-only. autogatus reads the keys under `alerting:` and nothing else (no values, so no secrets), and re-reads them each cycle, so a provider you add to Gatus starts working without a restart.
@@ -115,9 +127,9 @@ Add checks to a container with `autogatus.check.<id>.*` labels:
 | `autogatus.check.<id>.name` | Endpoint name (default `<container>-<id>`) |
 | `autogatus.check.<id>.group` | Dashboard group (default the container's stack) |
 | `autogatus.check.<id>.interval` | How often the check runs (default the resync interval). The endpoint heartbeat is derived from it |
-| `autogatus.check.<id>.timeout` | Check timeout in seconds (default 5) |
+| `autogatus.check.<id>.timeout` | Check timeout, a duration (default `5s`) |
 | `autogatus.check.<id>.alert-description` | Alert description (old key `description` still works) |
-| `autogatus.check.<id>.alerts` | Comma list of Gatus providers, same routing as everything else |
+| `autogatus.check.<id>.alerts` | Gatus providers, shorthand or structured, same routing as everything else |
 
 A headless `cloudflare-ddns` container, checked by a command run inside it:
 
@@ -147,14 +159,14 @@ A tcp check dials from autogatus's own network position, so autogatus has to sha
 |-----|---------|---------|
 | `AUTOGATUS_OUTPUT` | `/output/autogatus.yaml` | Where the generated file is written |
 | `AUTOGATUS_DEFAULT_GROUP` | *(empty)* | Fallback group, empty means group by container name |
-| `AUTOGATUS_RESYNC_INTERVAL` | `15` | Seconds between reconciles |
+| `AUTOGATUS_RESYNC_INTERVAL` | `15s` | How often to reconcile, a duration (`15s`, `1m`) |
 | `AUTOGATUS_LOG_LEVEL` | `INFO` | `DEBUG` for per-container detail |
 | `AUTOGATUS_LOG_FORMAT` | `text` | `text` (human) or `json` (one object per line, for aggregators) |
 | `AUTOGATUS_ACCESS_LOG_LEVEL` | `INFO` | Level for `/details` request logs, `OFF` to suppress |
 | `AUTOGATUS_MONITOR_CONTAINERS` | `false` | Enable container monitoring (Tier 2) |
 | `AUTOGATUS_GATUS_URL` | `http://gatus:8080` | Gatus base URL for pushes |
 | `AUTOGATUS_PUSH_TOKEN` | *(generated)* | Bearer token, auto-generated and persisted if unset |
-| `AUTOGATUS_PUSH_TIMEOUT` | `15` | Seconds to wait on a single push before giving up |
+| `AUTOGATUS_PUSH_TIMEOUT` | `15s` | How long to wait on a single push, a duration |
 | `AUTOGATUS_STACK_MAP` | *(none)* | Path to a `{service: stack}` YAML for grouping |
 | `AUTOGATUS_HEADLINE_METRIC` | `mem_used_mb` | Graphed metric: `mem_used_mb`, `mem_percent`, or `cpu_percent` |
 | `AUTOGATUS_HEARTBEAT_INTERVAL` | `90s` | No push within this and Gatus marks the container down |

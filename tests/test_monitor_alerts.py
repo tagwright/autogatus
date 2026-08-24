@@ -19,27 +19,45 @@ def _monitor(default_alert_types):
     )
 
 
+def _types(alerts):
+    return [a["type"] for a in alerts]
+
+
 def test_default_alert_types_when_no_label():
     m = _monitor(["custom", "ntfy"])
-    assert m._alert_types_for(FakeContainer({})) == ["custom", "ntfy"]
+    assert _types(m._alerts_for(FakeContainer({}))) == ["custom", "ntfy"]
 
 
 def test_label_overrides_default():
     m = _monitor(["custom"])
-    assert m._alert_types_for(FakeContainer({"autogatus.alerts": "ntfy,discord"})) == [
-        "ntfy",
-        "discord",
-    ]
+    got = m._alerts_for(FakeContainer({"autogatus.alerts": "ntfy,discord"}))
+    assert _types(got) == ["ntfy", "discord"]
 
 
 def test_label_none_disables():
     m = _monitor(["custom"])
-    assert m._alert_types_for(FakeContainer({"autogatus.alerts": "none"})) == []
+    assert m._alerts_for(FakeContainer({"autogatus.alerts": "none"})) == []
 
 
 def test_default_falls_back_to_custom():
     m = _monitor(None)
-    assert m._alert_types_for(FakeContainer({})) == ["custom"]
+    assert _types(m._alerts_for(FakeContainer({}))) == ["custom"]
+
+
+def test_container_structured_alerts():
+    m = _monitor(["custom"])
+    got = m._alerts_for(
+        FakeContainer(
+            {
+                "autogatus.alerts.0.type": "ntfy",
+                "autogatus.alerts.0.failure-threshold": "5",
+                "autogatus.alerts.0.send-on-resolved": "true",
+            }
+        )
+    )
+    assert got == [
+        {"type": "ntfy", "failure-threshold": 5, "send-on-resolved": True, "description": "c (c)"}
+    ]
 
 
 # ── reconcile-level: opt-out and alert cascade ────────────────────────────────

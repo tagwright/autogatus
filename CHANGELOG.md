@@ -10,6 +10,8 @@ A round of naming and behavior cleanup before the label and env interface freeze
 - Renamed the label `autogatus.check.<id>.description` to `autogatus.check.<id>.alert-description`, matching the gatus side. The old key still works through beta.
 - A container's `autogatus.alerts` now cascades to its `autogatus.check.<id>` checks that do not set their own `.alerts`. Set it once and it covers the container and its checks.
 - Added `autogatus.enable=false` to opt one container out of tier-2 auto monitoring, the per-container version of `AUTOGATUS_EXCLUDE`. Any `autogatus.check.<id>.*` checks on that container still run.
+- Alerts now accept the full Gatus alert shape. Alongside the `alerts=custom,ntfy` shorthand there is a structured form, `alerts.<n>.type` with `failure-threshold`, `success-threshold`, `send-on-resolved`, and `description`, at all three alert sites. The structured form wins when its keys are present, and the shorthand still expands to a default alert per type. The cascade carries whole alert objects, not just the provider names.
+- Every time value takes a Go duration string now (`15s`, `5m`, `1h30m`), matching Gatus. `AUTOGATUS_RESYNC_INTERVAL` and `AUTOGATUS_PUSH_TIMEOUT` moved off bare seconds. A bare number is still read as seconds.
 
 ## v00.01.00b1 (beta)
 

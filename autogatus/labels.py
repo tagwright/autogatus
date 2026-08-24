@@ -15,7 +15,10 @@ Label schema (Traefik/Autokuma shaped, opt-in):
     gatus.<id>.method=GET                     # optional (http)
     gatus.<id>.body=...                       # optional (http)
     gatus.<id>.headers.X-Api-Key=...          # optional (http), repeatable
-    gatus.<id>.alerts=custom,ntfy             # Gatus providers (default custom, none silences)
+    gatus.<id>.alerts=custom,ntfy             # Gatus providers, shorthand form
+    gatus.<id>.alerts.0.type=ntfy             # or the structured form, with
+    gatus.<id>.alerts.0.failure-threshold=5   #   per-alert options: failure-threshold,
+    gatus.<id>.alerts.0.send-on-resolved=true #   success-threshold, send-on-resolved, description
     gatus.<id>.alert-description=...           # default: "<name> is down"
 
 One container may declare many endpoints by using different ``<id>`` segments.
@@ -25,7 +28,7 @@ from __future__ import annotations
 
 import re
 
-from .alerts import build_alerts, parse_type_list
+from .alerts import build_alerts, parse_alerts
 
 ENABLE_KEY = "gatus.enable"
 PREFIX = "gatus."
@@ -133,16 +136,17 @@ def parse_container(labels: dict, container_name: str, default_group: str = "") 
         if headers:
             endpoint["headers"] = headers
 
-        # Alert channels: `gatus.<id>.alerts=custom,ntfy` is a list of provider
-        # types. Absent means a single `custom` alert, `none` silences it. These
-        # are the REQUESTED types, filtered against Gatus's configured providers
-        # downstream.
-        requested = parse_type_list(fields.get("alerts"))
-        if requested is None:
-            requested = ["custom"]
-        if requested:
-            description = fields.get("alert-description", "").strip() or f"{name} is down"
-            endpoint["alerts"] = build_alerts(requested, description)
+        # Alert channels. `gatus.<id>.alerts=custom,ntfy` is the shorthand, and
+        # `gatus.<id>.alerts.<n>.type` with per-alert options is the full form
+        # (structured wins if present). Absent means a single `custom` alert,
+        # `none` silences. These are the requested alerts, filtered against
+        # Gatus's configured providers downstream.
+        default_desc = fields.get("alert-description", "").strip() or f"{name} is down"
+        alerts = parse_alerts(fields, default_description=default_desc, context=f"{group}/{name}")
+        if alerts is None:
+            alerts = build_alerts(["custom"], default_desc)
+        if alerts:
+            endpoint["alerts"] = alerts
 
         endpoints.append(endpoint)
 

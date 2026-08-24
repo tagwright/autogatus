@@ -74,13 +74,14 @@ def test_overrides_name_group_interval_timeout_alerts():
     assert c.group == "edge"
     assert c.interval == "30s"
     assert c.timeout == 2.5
-    assert c.alert_types == ["custom", "ntfy"]
+    assert [a["type"] for a in c.alerts] == ["custom", "ntfy"]
 
 
 def test_alerts_default_applied_when_absent():
     labels = {"autogatus.check.c.tcp": "80"}
-    c = parse_container_checks(labels, "app", "s", default_alert_types=["custom"])[0][0]
-    assert c.alert_types == ["custom"]
+    default = [{"type": "custom", "description": "d"}]
+    c = parse_container_checks(labels, "app", "s", default_alerts=default)[0][0]
+    assert c.alerts == default
 
 
 def test_multiple_checks_per_container_distinct_ids():
@@ -181,17 +182,36 @@ def test_description_legacy_alias_still_works():
     assert c.description == "old style"
 
 
-def test_check_inherits_default_alert_types():
+def test_check_inherits_default_alerts():
     # cascade at the parse level: a check with no .alerts takes the passed default
     labels = {"autogatus.check.x.tcp": "80"}
-    c = parse_container_checks(labels, "app", "s", default_alert_types=["ntfy"])[0][0]
-    assert c.alert_types == ["ntfy"]
+    default = [{"type": "ntfy", "description": "cascaded"}]
+    c = parse_container_checks(labels, "app", "s", default_alerts=default)[0][0]
+    assert c.alerts == default
 
 
 def test_check_own_alerts_override_default():
     labels = {"autogatus.check.x.tcp": "80", "autogatus.check.x.alerts": "custom"}
-    c = parse_container_checks(labels, "app", "s", default_alert_types=["ntfy"])[0][0]
-    assert c.alert_types == ["custom"]
+    default = [{"type": "ntfy", "description": "cascaded"}]
+    c = parse_container_checks(labels, "app", "s", default_alerts=default)[0][0]
+    assert [a["type"] for a in c.alerts] == ["custom"]
+
+
+def test_check_none_does_not_cascade():
+    labels = {"autogatus.check.x.tcp": "80", "autogatus.check.x.alerts": "none"}
+    default = [{"type": "ntfy", "description": "cascaded"}]
+    c = parse_container_checks(labels, "app", "s", default_alerts=default)[0][0]
+    assert c.alerts == []
+
+
+def test_check_structured_alerts():
+    labels = {
+        "autogatus.check.x.tcp": "80",
+        "autogatus.check.x.alerts.0.type": "custom",
+        "autogatus.check.x.alerts.0.failure-threshold": "3",
+    }
+    c = parse_container_checks(labels, "app", "s")[0][0]
+    assert c.alerts == [{"type": "custom", "failure-threshold": 3, "description": "app-x check"}]
 
 
 def test_check_run_interval_default():

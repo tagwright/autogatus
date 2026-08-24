@@ -16,9 +16,10 @@ Label schema, per container, one external endpoint per check:
     autogatus.check.<id>.group=<group>      # default: the container's stack
     autogatus.check.<id>.interval=<dur>     # how often the check runs; default
                                             # the resync interval
-    autogatus.check.<id>.timeout=<seconds>  # check timeout (default 5)
+    autogatus.check.<id>.timeout=<dur>      # check timeout (default 5s)
     autogatus.check.<id>.alert-description=<text>
-    autogatus.check.<id>.alerts=<types>     # comma list of Gatus providers
+    autogatus.check.<id>.alerts=<types>     # Gatus providers (shorthand), or the
+    autogatus.check.<id>.alerts.0.type=...  #   structured form with per-alert options
 
 exec runs arbitrary commands in containers, so it is gated behind the global
 AUTOGATUS_ENABLE_EXEC opt-in as well as the per-container label.
@@ -27,32 +28,18 @@ AUTOGATUS_ENABLE_EXEC opt-in as well as the per-container label.
 from __future__ import annotations
 
 import logging
-import re
 import socket
 import threading
 from dataclasses import dataclass
 
+from .alerts import parse_alerts
+from .duration import parse_duration_seconds
 from .health import Verdict
 
 logger = logging.getLogger("autogatus")
 
 PREFIX = "autogatus.check."
 DEFAULT_TIMEOUT = 5.0
-
-_DURATION = re.compile(r"(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$")
-_UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
-
-
-def parse_duration_seconds(value, default: float) -> float:
-    """Parse a duration into seconds. Accepts a bare number (seconds) or a Gatus
-    style string like ``30s``, ``5m``, ``2h``. Returns ``default`` if unparseable."""
-    s = str(value or "").strip().lower()
-    if not s:
-        return default
-    m = _DURATION.fullmatch(s)
-    if not m:
-        return default
-    return float(m.group(1)) * _UNIT_SECONDS[m.group(2) or "s"]
 
 
 @dataclass
@@ -64,7 +51,7 @@ class Check:
     group: str
     interval: str
     description: str
-    alert_types: list | None = None
+    alerts: list | None = None
     timeout: float = DEFAULT_TIMEOUT
     tcp_host: str = ""
     tcp_port: int = 0
@@ -105,7 +92,7 @@ def parse_container_checks(
     labels: dict,
     container_name: str,
     stack: str,
-    default_alert_types=None,
+    default_alerts=None,
     default_interval: str = "90s",
     exec_enabled: bool = False,
 ) -> tuple[list[Check], bool]:
@@ -126,17 +113,15 @@ def parse_container_checks(
         description = (
             fields.get("alert-description") or fields.get("description") or f"{name} check"
         ).strip()
-        try:
-            timeout = float(fields.get("timeout", DEFAULT_TIMEOUT))
-        except (TypeError, ValueError):
-            timeout = DEFAULT_TIMEOUT
-        alert_types = None
-        if "alerts" in fields:
-            from .alerts import parse_type_list
-
-            alert_types = parse_type_list(fields.get("alerts"))
-        if alert_types is None and default_alert_types is not None:
-            alert_types = list(default_alert_types)
+        timeout = parse_duration_seconds(fields.get("timeout"), DEFAULT_TIMEOUT)
+        # A check's own alerts (shorthand or structured), else it inherits the
+        # container's autogatus.alerts, else the global default. `none` on the
+        # check keeps it silenced and does not cascade.
+        alerts = parse_alerts(
+            fields, default_description=description, context=f"check {cid} on {container_name}"
+        )
+        if alerts is None:
+            alerts = list(default_alerts) if default_alerts else []
 
         if "exec" in fields and str(fields.get("exec")).strip():
             if not exec_enabled:
@@ -151,7 +136,7 @@ def parse_container_checks(
                     group=group,
                     interval=interval,
                     description=description,
-                    alert_types=alert_types,
+                    alerts=alerts,
                     timeout=timeout,
                 )
             )
@@ -175,7 +160,7 @@ def parse_container_checks(
                     group=group,
                     interval=interval,
                     description=description,
-                    alert_types=alert_types,
+                    alerts=alerts,
                     timeout=timeout,
                     tcp_host=host,
                     tcp_port=port,

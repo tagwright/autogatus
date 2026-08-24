@@ -19,7 +19,7 @@ services:
     environment:
       AUTOGATUS_OUTPUT: /output/autogatus.yaml
       AUTOGATUS_DEFAULT_GROUP: ""              # empty = group by container name
-      AUTOGATUS_RESYNC_INTERVAL: "15"
+      AUTOGATUS_RESYNC_INTERVAL: "15s"      # durations everywhere: 15s, 1m, 1h30m
       # Logging
       AUTOGATUS_LOG_FORMAT: text               # text (human) or json (aggregators)
       AUTOGATUS_LOG_LEVEL: INFO                 # DEBUG for per-container detail
@@ -56,7 +56,11 @@ services:
       gatus.web.url: "http://whoami/"
       gatus.web.conditions.0: "[STATUS] == 200"
       gatus.web.conditions.1: "[RESPONSE_TIME] < 300"
-      gatus.web.alerts: "custom"     # fire these Gatus providers (must be configured in Gatus)
+      gatus.web.alerts: "custom"     # shorthand: fire these Gatus providers (must be configured in Gatus)
+      # Or the structured form when you want per-alert options:
+      # gatus.web.alerts.0.type: "ntfy"
+      # gatus.web.alerts.0.failure-threshold: "5"
+      # gatus.web.alerts.0.send-on-resolved: "true"
 
   # A headless container with no HTTP endpoint: autogatus runs the check and
   # pushes the verdict (needs AUTOGATUS_ENABLE_EXEC=true for exec).

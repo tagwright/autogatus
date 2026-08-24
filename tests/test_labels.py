@@ -167,3 +167,24 @@ def test_legacy_alert_bool_is_ignored():
     labels = {"gatus.enable": "true", "gatus.web.url": "http://svc/", "gatus.web.alert": "false"}
     ep = parse_container(labels, "svc")[0]
     assert ep["alerts"] == [{"type": "custom", "description": "web is down"}]
+
+
+def test_structured_endpoint_alerts():
+    labels = {
+        "gatus.enable": "true",
+        "gatus.web.url": "http://svc/",
+        "gatus.web.alerts.0.type": "ntfy",
+        "gatus.web.alerts.0.failure-threshold": "5",
+        "gatus.web.alerts.0.send-on-resolved": "true",
+        "gatus.web.alerts.1.type": "custom",
+    }
+    ep = parse_container(labels, "svc")[0]
+    assert ep["alerts"] == [
+        {
+            "type": "ntfy",
+            "failure-threshold": 5,
+            "send-on-resolved": True,
+            "description": "web is down",
+        },
+        {"type": "custom", "description": "web is down"},
+    ]

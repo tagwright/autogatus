@@ -24,6 +24,7 @@ import time
 import docker
 
 from .alerts import parse_type_list, resolve_allowlist
+from .duration import parse_duration_seconds
 from .health import Thresholds
 from .logging_setup import register_secret, setup_logging
 from .monitor import ContainerMonitor
@@ -51,7 +52,7 @@ def _float_or_none(name: str):
 
 OUTPUT_PATH = os.environ.get("AUTOGATUS_OUTPUT", "/output/autogatus.yaml")
 DEFAULT_GROUP = os.environ.get("AUTOGATUS_DEFAULT_GROUP", "")
-INTERVAL = int(os.environ.get("AUTOGATUS_RESYNC_INTERVAL", "15"))
+INTERVAL = int(parse_duration_seconds(os.environ.get("AUTOGATUS_RESYNC_INTERVAL", "15s"), 15))
 LOG_LEVEL = os.environ.get("AUTOGATUS_LOG_LEVEL", "INFO").upper()
 LOG_FORMAT = os.environ.get("AUTOGATUS_LOG_FORMAT", "text").lower()
 ACCESS_LOG_LEVEL = os.environ.get("AUTOGATUS_ACCESS_LOG_LEVEL", "INFO").upper()
@@ -64,7 +65,7 @@ HEADLINE_METRIC = os.environ.get("AUTOGATUS_HEADLINE_METRIC", "mem_used_mb")
 HEARTBEAT_INTERVAL = os.environ.get("AUTOGATUS_HEARTBEAT_INTERVAL", "90s")
 # Push HTTP timeout. Generous by default: a slow disk (raid scrub, backup window)
 # can stall Gatus for several seconds, and a timed-out push is a missed heartbeat.
-PUSH_TIMEOUT = float(os.environ.get("AUTOGATUS_PUSH_TIMEOUT", "15"))
+PUSH_TIMEOUT = parse_duration_seconds(os.environ.get("AUTOGATUS_PUSH_TIMEOUT", "15s"), 15.0)
 # AUTOGATUS_ENABLE_EXEC is the on/off switch for exec checks. The old name
 # AUTOGATUS_EXEC_CHECKS stays as a deprecated alias through beta.
 ENABLE_EXEC = _bool("AUTOGATUS_ENABLE_EXEC", _bool("AUTOGATUS_EXEC_CHECKS", False))
