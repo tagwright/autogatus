@@ -6,6 +6,7 @@ from autogatus.checks import (
     evaluate_exec,
     evaluate_tcp,
     parse_container_checks,
+    parse_duration_seconds,
     run_check,
 )
 
@@ -163,3 +164,48 @@ def test_run_check_exec_success_verdict():
     v = run_check(chk, container)
     assert v.success is True
     assert v.error.startswith("exec ")
+
+
+# ── pre-1.0 naming and behavior ───────────────────────────────────────────────
+
+
+def test_alert_description_alias_preferred():
+    labels = {"autogatus.check.x.tcp": "80", "autogatus.check.x.alert-description": "db down"}
+    c = parse_container_checks(labels, "app", "s")[0][0]
+    assert c.description == "db down"
+
+
+def test_description_legacy_alias_still_works():
+    labels = {"autogatus.check.x.tcp": "80", "autogatus.check.x.description": "old style"}
+    c = parse_container_checks(labels, "app", "s")[0][0]
+    assert c.description == "old style"
+
+
+def test_check_inherits_default_alert_types():
+    # cascade at the parse level: a check with no .alerts takes the passed default
+    labels = {"autogatus.check.x.tcp": "80"}
+    c = parse_container_checks(labels, "app", "s", default_alert_types=["ntfy"])[0][0]
+    assert c.alert_types == ["ntfy"]
+
+
+def test_check_own_alerts_override_default():
+    labels = {"autogatus.check.x.tcp": "80", "autogatus.check.x.alerts": "custom"}
+    c = parse_container_checks(labels, "app", "s", default_alert_types=["ntfy"])[0][0]
+    assert c.alert_types == ["custom"]
+
+
+def test_check_run_interval_default():
+    labels = {"autogatus.check.x.tcp": "80"}
+    c = parse_container_checks(labels, "app", "s", default_interval="20s")[0][0]
+    assert c.interval == "20s"
+
+
+def test_parse_duration_seconds():
+    assert parse_duration_seconds("30s", 0) == 30
+    assert parse_duration_seconds("5m", 0) == 300
+    assert parse_duration_seconds("2h", 0) == 7200
+    assert parse_duration_seconds("100ms", 0) == 0.1
+    assert parse_duration_seconds("15", 0) == 15  # bare number is seconds
+    assert parse_duration_seconds("", 9) == 9  # empty falls back
+    assert parse_duration_seconds("bogus", 9) == 9  # unparseable falls back
+    assert parse_duration_seconds(None, 9) == 9

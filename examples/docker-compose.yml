@@ -37,7 +37,7 @@ services:
       # network-isolated containers a central Gatus can't reach). exec runs a
       # command IN the container, so it is gated behind this opt-in. Note: the
       # Docker socket grants exec regardless of the :ro mount above.
-      # AUTOGATUS_EXEC_CHECKS: "true"           # allow autogatus.check.<id>.exec labels
+      # AUTOGATUS_ENABLE_EXEC: "true"           # allow autogatus.check.<id>.exec labels
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro   # read-only socket
       - gatus-generated:/output
@@ -59,7 +59,7 @@ services:
       gatus.web.alerts: "custom"     # fire these Gatus providers (must be configured in Gatus)
 
   # A headless container with no HTTP endpoint: autogatus runs the check and
-  # pushes the verdict (needs AUTOGATUS_EXEC_CHECKS=true for exec).
+  # pushes the verdict (needs AUTOGATUS_ENABLE_EXEC=true for exec).
   cloudflare-ddns:
     image: favonia/cloudflare-ddns
     labels:

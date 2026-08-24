@@ -14,18 +14,20 @@ Label schema, per container, one external endpoint per check:
                                             # container name, so tcp=<port> works
     autogatus.check.<id>.name=<name>        # default: <container>-<id>
     autogatus.check.<id>.group=<group>      # default: the container's stack
-    autogatus.check.<id>.interval=<dur>     # heartbeat interval for the endpoint
+    autogatus.check.<id>.interval=<dur>     # how often the check runs; default
+                                            # the resync interval
     autogatus.check.<id>.timeout=<seconds>  # check timeout (default 5)
-    autogatus.check.<id>.description=<text>
+    autogatus.check.<id>.alert-description=<text>
     autogatus.check.<id>.alerts=<types>     # comma list of Gatus providers
 
 exec runs arbitrary commands in containers, so it is gated behind the global
-AUTOGATUS_EXEC_CHECKS opt-in as well as the per-container label.
+AUTOGATUS_ENABLE_EXEC opt-in as well as the per-container label.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import socket
 import threading
 from dataclasses import dataclass
@@ -36,6 +38,21 @@ logger = logging.getLogger("autogatus")
 
 PREFIX = "autogatus.check."
 DEFAULT_TIMEOUT = 5.0
+
+_DURATION = re.compile(r"(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$")
+_UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
+
+
+def parse_duration_seconds(value, default: float) -> float:
+    """Parse a duration into seconds. Accepts a bare number (seconds) or a Gatus
+    style string like ``30s``, ``5m``, ``2h``. Returns ``default`` if unparseable."""
+    s = str(value or "").strip().lower()
+    if not s:
+        return default
+    m = _DURATION.fullmatch(s)
+    if not m:
+        return default
+    return float(m.group(1)) * _UNIT_SECONDS[m.group(2) or "s"]
 
 
 @dataclass
@@ -104,7 +121,11 @@ def parse_container_checks(
         name = (fields.get("name") or f"{container_name}-{cid}").strip()
         group = (fields.get("group") or stack).strip() or stack
         interval = (fields.get("interval") or default_interval).strip() or default_interval
-        description = (fields.get("description") or f"{name} check").strip()
+        # `alert-description` matches the gatus.<id>.alert-description name. The
+        # older `description` key stays as a deprecated alias through beta.
+        description = (
+            fields.get("alert-description") or fields.get("description") or f"{name} check"
+        ).strip()
         try:
             timeout = float(fields.get("timeout", DEFAULT_TIMEOUT))
         except (TypeError, ValueError):

@@ -85,7 +85,7 @@ def test_alert_can_be_disabled():
     labels = {
         "gatus.enable": "true",
         "gatus.web.url": "http://svc/",
-        "gatus.web.alert": "false",
+        "gatus.web.alerts": "none",
     }
     ep = parse_container(labels, "svc")[0]
     assert "alerts" not in ep
@@ -161,7 +161,9 @@ def test_alert_bool_backcompat_default_custom():
     assert ep["alerts"] == [{"type": "custom", "description": "web is down"}]
 
 
-def test_alert_false_backcompat():
+def test_legacy_alert_bool_is_ignored():
+    # gatus.<id>.alert (the old bool) was removed. It is now an unknown field, so
+    # the default single custom alert still applies. Silence with alerts=none.
     labels = {"gatus.enable": "true", "gatus.web.url": "http://svc/", "gatus.web.alert": "false"}
     ep = parse_container(labels, "svc")[0]
-    assert "alerts" not in ep
+    assert ep["alerts"] == [{"type": "custom", "description": "web is down"}]

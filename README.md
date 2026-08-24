@@ -54,8 +54,7 @@ A container is ignored unless it sets `gatus.enable=true`. Each endpoint gets an
 | `gatus.<id>.method` | - | HTTP method |
 | `gatus.<id>.body` | - | HTTP request body |
 | `gatus.<id>.headers.<Name>` | - | HTTP header, repeatable |
-| `gatus.<id>.alert` | `true` | Legacy on/off, attaches a single `custom` alert |
-| `gatus.<id>.alerts` | *(from `.alert`)* | Comma list of Gatus providers like `custom,ntfy`, wins over `.alert` |
+| `gatus.<id>.alerts` | `custom` | Comma list of Gatus providers like `custom,ntfy`. `none` silences it |
 | `gatus.<id>.alert-description` | `<name> is down` | Alert description |
 
 Conditions pass through to Gatus untouched, so anything Gatus understands (`[BODY].x`, `[CERTIFICATE_EXPIRATION]`, and the rest) works. Provider selection is covered under Alert routing.
@@ -74,7 +73,7 @@ autogatus sets a Gatus heartbeat on each endpoint. If autogatus stops pushing, t
 
 **Grouping.** A Compose project holds many logical stacks under one project name, so pass a `{service: stack}` map with `AUTOGATUS_STACK_MAP` to group endpoints by stack. Unmapped services fall back to the container name.
 
-**What gets monitored.** autogatus starts watching a container once it has seen it running, so a crash or a stop becomes a failure (the heartbeat backs this up). A one-shot that ran and exited before autogatus ever saw it is left alone, and a removed container drops off. Skip noise with `AUTOGATUS_EXCLUDE` (default `autogatus,claude-code`).
+**What gets monitored.** autogatus starts watching a container once it has seen it running, so a crash or a stop becomes a failure (the heartbeat backs this up). A one-shot that ran and exited before autogatus ever saw it is left alone, and a removed container drops off. Skip noise globally with `AUTOGATUS_EXCLUDE` (default `autogatus,claude-code`), or opt a single container out with the label `autogatus.enable=false`. Watch the polarity: `gatus.enable=true` opts a container *into* tier-1 probed endpoints, `autogatus.enable=false` opts it *out* of tier-2 auto monitoring. A container you opt out can still declare `autogatus.check.<id>.*` checks, since those are a separate, deliberate opt-in and keep running.
 
 **Thresholds.** Memory pressure and restart loops fail by default, since both mean the container is about to fall over. CPU is reported but never fails on its own unless you set `AUTOGATUS_CPU_THRESHOLD`. A container can run hot for a while without being broken.
 
@@ -93,8 +92,8 @@ It loads Gatus's live `/css/app.css`, so color and theme changes ride along on a
 
 autogatus writes the `alerts:` block on each endpoint and names Gatus providers in it. Gatus does the sending.
 
-- **Tier 1** (labeled endpoints): `gatus.<id>.alerts=custom,ntfy` sets the providers for that endpoint. The older `gatus.<id>.alert=true|false` still works and maps to a single `custom` alert. A list wins over the bool, and `none` turns alerts off.
-- **Tier 2** (monitored containers): the default comes from `AUTOGATUS_ALERT_TYPES` (or `custom` if you leave it unset), overridable per container with `autogatus.alerts=ntfy,custom` (`none` silences one container).
+- **Tier 1** (labeled endpoints): `gatus.<id>.alerts=custom,ntfy` sets the providers for that endpoint. Leave it off and you get a single `custom` alert. `none` turns alerts off.
+- **Tier 2** (monitored containers): the default comes from `AUTOGATUS_ALERT_TYPES` (or `custom` if you leave it unset), overridable per container with `autogatus.alerts=ntfy,custom` (`none` silences one container). A container's `autogatus.alerts` also cascades to its `autogatus.check.<id>` checks that do not set their own `.alerts`, so setting it once covers the container and its checks.
 
 A provider only fires if it is configured in Gatus's own `alerting:` section. autogatus names providers, it does not define them, so a label pointing at a provider Gatus has never heard of would be a dead alert. To catch that, autogatus builds an allowlist of the providers Gatus actually has configured and drops anything outside it:
 
@@ -115,9 +114,9 @@ Add checks to a container with `autogatus.check.<id>.*` labels:
 | `autogatus.check.<id>.tcp` | `host:port` (or just `port`, host defaults to the container name) to TCP-connect |
 | `autogatus.check.<id>.name` | Endpoint name (default `<container>-<id>`) |
 | `autogatus.check.<id>.group` | Dashboard group (default the container's stack) |
-| `autogatus.check.<id>.interval` | Heartbeat interval for the endpoint |
+| `autogatus.check.<id>.interval` | How often the check runs (default the resync interval). The endpoint heartbeat is derived from it |
 | `autogatus.check.<id>.timeout` | Check timeout in seconds (default 5) |
-| `autogatus.check.<id>.description` | Alert description |
+| `autogatus.check.<id>.alert-description` | Alert description (old key `description` still works) |
 | `autogatus.check.<id>.alerts` | Comma list of Gatus providers, same routing as everything else |
 
 A headless `cloudflare-ddns` container, checked by a command run inside it:
@@ -138,7 +137,7 @@ A TCP check against a service on a network autogatus shares:
       autogatus.check.api.tcp: "8080"
 ```
 
-Exec runs commands inside your containers, and a `:ro` socket mount does not stop it, because the exec API ignores the mount flag. So exec stays off until you turn it on in two places: the per-container label and a global `AUTOGATUS_EXEC_CHECKS=true` (default off). With the global flag off, exec labels are ignored and logged once, while tcp checks keep working. Turn it on only if you trust the labels on your containers.
+Exec runs commands inside your containers, and a `:ro` socket mount does not stop it, because the exec API ignores the mount flag. So exec stays off until you turn it on in two places: the per-container label and a global `AUTOGATUS_ENABLE_EXEC=true` (default off). With the global flag off, exec labels are ignored and logged once, while tcp checks keep working. Turn it on only if you trust the labels on your containers.
 
 A tcp check dials from autogatus's own network position, so autogatus has to share a Docker network with the target. Exec has no such constraint, since it goes over the Docker API rather than the network.
 
@@ -162,7 +161,7 @@ A tcp check dials from autogatus's own network position, so autogatus has to sha
 | `AUTOGATUS_MEM_THRESHOLD` | `95` | Fail over this % of memory limit (blank or `none` disables) |
 | `AUTOGATUS_CPU_THRESHOLD` | *(disabled)* | Fail over this CPU % if set |
 | `AUTOGATUS_EXCLUDE` | `autogatus,claude-code` | Comma-separated name substrings to skip |
-| `AUTOGATUS_EXEC_CHECKS` | `false` | Global opt-in for `autogatus.check.<id>.exec` (runs commands in containers) |
+| `AUTOGATUS_ENABLE_EXEC` | `false` | Global opt-in for `autogatus.check.<id>.exec` (runs commands in containers). Old name `AUTOGATUS_EXEC_CHECKS` still works |
 | `AUTOGATUS_GATUS_CONFIG` | *(none)* | Path to Gatus's config (file or dir), used to build the alert-provider allowlist |
 | `AUTOGATUS_ALERT_TYPES` | `custom` | Default alert channels for monitored containers, and the allowlist fallback |
 | `AUTOGATUS_WEB` | `true` | Serve the `/details` detail view |

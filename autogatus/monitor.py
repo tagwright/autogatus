@@ -17,7 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from .alerts import build_alerts, filter_alerts, parse_type_list
-from .checks import parse_container_checks, run_check
+from .checks import parse_container_checks, parse_duration_seconds, run_check
 from .collector import collect_health
 from .health import Thresholds, evaluate
 
@@ -26,6 +26,11 @@ logger = logging.getLogger("autogatus")
 # Per-container override of alert channels (distinct from the gatus.* opt-in
 # namespace used to declare probe endpoints).
 ALERTS_LABEL = "autogatus.alerts"
+# Per-container opt-out of tier-2 auto monitoring. Note the polarity: gatus.enable
+# opts a container INTO tier-1 probed endpoints, autogatus.enable=false opts it OUT
+# of tier-2 auto monitoring. Declared autogatus.check.* checks still run regardless.
+ENABLE_LABEL = "autogatus.enable"
+_FALSE = {"false", "0", "no", "off"}
 
 _SAFE = re.compile(r"[^a-zA-Z0-9_-]+")
 # Gatus builds an endpoint key by sanitizing group and name (underscores and
@@ -58,6 +63,7 @@ class ContainerMonitor:
         store=None,
         default_alert_types=None,
         exec_enabled=False,
+        resync_interval: int = 15,
     ):
         self.client = client
         self.pusher = pusher
@@ -74,12 +80,23 @@ class ContainerMonitor:
         # container via the autogatus.alerts label.
         self.default_alert_types = list(default_alert_types) if default_alert_types else ["custom"]
         self.exec_enabled = exec_enabled
+        self.resync_interval = resync_interval
         self._warned_exec_disabled = False
         self._seen_running: set[str] = set()
         self._prev_restart: dict[str, int] = {}
+        # Checks run on their own cadence, so remember when each last ran and its
+        # last verdict (reused between runs so the endpoint stays in the store).
+        self._check_last_run: dict[str, float] = {}
+        self._check_last_verdict: dict = {}
 
     def _excluded(self, name: str) -> bool:
         return any(pat and pat in name for pat in self.excludes)
+
+    def _monitor_disabled(self, container) -> bool:
+        """True if the container opted out of tier-2 monitoring with
+        autogatus.enable=false. Checks are unaffected, they are a separate opt-in."""
+        val = (container.labels or {}).get(ENABLE_LABEL)
+        return val is not None and str(val).strip().lower() in _FALSE
 
     def _stack_for(self, container) -> str:
         service = (container.labels or {}).get("com.docker.compose.service", "")
@@ -111,11 +128,16 @@ class ContainerMonitor:
             return [], []
 
         present = {c.name for c in containers}
+        now = time.time()
+        declarations = []
+        push_verdicts = []
+        declared_keys: set[str] = set()
 
+        # --- Liveness: every non-excluded container that has not opted out ---
         # Eligibility is cheap (labels/status); do it sequentially.
         worklist = []
         for c in containers:
-            if self._excluded(c.name):
+            if self._excluded(c.name) or self._monitor_disabled(c):
                 continue
             running = c.status == "running"
             if running:
@@ -136,9 +158,6 @@ class ContainerMonitor:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 healths = list(pool.map(_collect, worklist))
 
-        ts = time.time()
-        declarations = []
-        verdicts = []
         for c, stack, health in healths:
             verdict = evaluate(
                 health,
@@ -162,13 +181,17 @@ class ContainerMonitor:
             if alerts:
                 decl["alerts"] = alerts
             declarations.append(decl)
-            verdicts.append((key, verdict))
+            declared_keys.add(key)
+            push_verdicts.append((key, verdict))
             if self.store is not None:
-                self.store.update(key, stack, name, health, verdict, ts)
+                self.store.update(key, stack, name, health, verdict, now)
 
-        # Checks pass: exec/tcp probes autogatus runs and pushes. These are
-        # additional to liveness and apply to any container carrying the labels,
-        # even one excluded from liveness monitoring.
+        # --- Checks: exec/tcp probes autogatus runs, on their own cadence. These
+        # are additional to liveness and apply to any container carrying the
+        # labels, even one excluded or opted out of liveness monitoring. A check's
+        # alert channels cascade: its own .alerts, else the container's
+        # autogatus.alerts, else the global default. ---
+        default_check_interval = f"{self.resync_interval}s"
         check_items = []
         saw_disabled_exec = False
         for c in containers:
@@ -176,8 +199,8 @@ class ContainerMonitor:
                 c.labels or {},
                 c.name,
                 self._stack_for(c),
-                default_alert_types=self.default_alert_types,
-                default_interval=self.heartbeat_interval,
+                default_alert_types=self._alert_types_for(c),
+                default_interval=default_check_interval,
                 exec_enabled=self.exec_enabled,
             )
             saw_disabled_exec = saw_disabled_exec or disabled
@@ -186,47 +209,66 @@ class ContainerMonitor:
 
         if saw_disabled_exec and not self._warned_exec_disabled:
             logger.warning(
-                "exec checks present but AUTOGATUS_EXEC_CHECKS is off; ignoring them "
+                "exec checks present but AUTOGATUS_ENABLE_EXEC is off; ignoring them "
                 "(exec runs commands in containers, so it is opt-in)"
             )
             self._warned_exec_disabled = True
 
-        def _run(item):
-            chk, c = item
-            return chk, run_check(chk, c)
-
-        check_results = []
-        if check_items:
-            workers = min(self.max_workers, len(check_items))
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                check_results = list(pool.map(_run, check_items))
-
-        for chk, verdict in check_results:
+        # Decide each check's key, run cadence, and derived heartbeat. The
+        # heartbeat is a multiple of the run interval, so one skipped cycle does
+        # not false-alarm but a stopped check still goes down.
+        meta = []
+        for chk, c in check_items:
             key = _gatus_key(chk.group, chk.name)
+            run_secs = parse_duration_seconds(chk.interval, float(self.resync_interval))
+            heartbeat = f"{max(int(run_secs * 3), 30)}s"
+            due = (now - self._check_last_run.get(key, 0.0)) >= run_secs
+            meta.append((chk, c, key, heartbeat, due))
+
+        # Run only the checks that are due this cycle, concurrently.
+        to_run = [(chk, c, key) for (chk, c, key, _hb, due) in meta if due]
+        if to_run:
+            workers = min(self.max_workers, len(to_run))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                results = list(pool.map(lambda it: (it[2], run_check(it[0], it[1])), to_run))
+            for key, verdict in results:
+                self._check_last_run[key] = now
+                self._check_last_verdict[key] = verdict
+
+        # Declare every check; push only the ones that ran this cycle. Between
+        # runs the last verdict keeps the endpoint alive in the store.
+        for chk, _c, key, heartbeat, due in meta:
             decl = {
                 "name": chk.name,
                 "group": chk.group,
                 "token": self.token,
-                "heartbeat": {"interval": chk.interval},
+                "heartbeat": {"interval": heartbeat},
             }
-            requested = build_alerts(chk.alert_types or self.default_alert_types, chk.description)
+            requested = build_alerts(chk.alert_types or [], chk.description)
             alerts = (
                 filter_alerts(requested, allowlist, key) if allowlist is not None else requested
             )
             if alerts:
                 decl["alerts"] = alerts
             declarations.append(decl)
-            verdicts.append((key, verdict))
-            if self.store is not None:
-                self.store.update(key, chk.group, chk.name, None, verdict, ts)
+            declared_keys.add(key)
+            verdict = self._check_last_verdict.get(key)
+            if due and verdict is not None:
+                push_verdicts.append((key, verdict))
+            if self.store is not None and verdict is not None:
+                self.store.update(key, chk.group, chk.name, None, verdict, now)
 
         if self.store is not None:
-            self.store.prune({k for k, _ in verdicts})
+            self.store.prune(declared_keys)
 
-        # Forget containers that no longer exist at all.
+        # Forget containers and checks that no longer exist.
         self._seen_running &= present
         self._prev_restart = {k: v for k, v in self._prev_restart.items() if k in present}
-        return declarations, verdicts
+        self._check_last_run = {k: v for k, v in self._check_last_run.items() if k in declared_keys}
+        self._check_last_verdict = {
+            k: v for k, v in self._check_last_verdict.items() if k in declared_keys
+        }
+        return declarations, push_verdicts
 
     def push_all(self, verdicts) -> int:
         pushed = 0

@@ -65,7 +65,12 @@ HEARTBEAT_INTERVAL = os.environ.get("AUTOGATUS_HEARTBEAT_INTERVAL", "90s")
 # Push HTTP timeout. Generous by default: a slow disk (raid scrub, backup window)
 # can stall Gatus for several seconds, and a timed-out push is a missed heartbeat.
 PUSH_TIMEOUT = float(os.environ.get("AUTOGATUS_PUSH_TIMEOUT", "15"))
-EXEC_CHECKS = _bool("AUTOGATUS_EXEC_CHECKS", False)
+# AUTOGATUS_ENABLE_EXEC is the on/off switch for exec checks. The old name
+# AUTOGATUS_EXEC_CHECKS stays as a deprecated alias through beta.
+ENABLE_EXEC = _bool("AUTOGATUS_ENABLE_EXEC", _bool("AUTOGATUS_EXEC_CHECKS", False))
+_LEGACY_EXEC_ENV = (
+    "AUTOGATUS_ENABLE_EXEC" not in os.environ and "AUTOGATUS_EXEC_CHECKS" in os.environ
+)
 WEB = _bool("AUTOGATUS_WEB", True)
 WEB_PORT = int(os.environ.get("AUTOGATUS_WEB_PORT", "8080"))
 EXCLUDES = [
@@ -141,6 +146,12 @@ def run() -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
+    if _LEGACY_EXEC_ENV:
+        logger.warning(
+            "AUTOGATUS_EXEC_CHECKS is deprecated and will be removed at 1.0, "
+            "use AUTOGATUS_ENABLE_EXEC"
+        )
+
     logger.info(
         "autogatus starting: output=%s interval=%ss monitor_containers=%s",
         OUTPUT_PATH,
@@ -166,7 +177,7 @@ def run() -> int:
             CPU_THRESHOLD,
             HEADLINE_METRIC,
             EXCLUDES,
-            EXEC_CHECKS,
+            ENABLE_EXEC,
         )
 
     while _running:
@@ -194,7 +205,8 @@ def run() -> int:
                 default_group=DEFAULT_GROUP,
                 store=store,
                 default_alert_types=ALERT_TYPES or ["custom"],
-                exec_enabled=EXEC_CHECKS,
+                exec_enabled=ENABLE_EXEC,
+                resync_interval=INTERVAL,
             )
 
         try:
