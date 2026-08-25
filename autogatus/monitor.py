@@ -90,9 +90,32 @@ class ContainerMonitor:
         # last verdict (reused between runs so the endpoint stays in the store).
         self._check_last_run: dict[str, float] = {}
         self._check_last_verdict: dict = {}
+        # A wedged exec check leaves its worker thread running. We track those by
+        # key so we do not launch another run on top of it (which would pile up
+        # orphan processes in the target container). Warnings are deduped.
+        self._check_inflight: dict = {}
+        self._warned_inflight: set[str] = set()
+        # Deduped warnings for two distinct group/name inputs that sanitize to the
+        # same Gatus key and would overwrite each other.
+        self._warned_collisions: set[str] = set()
 
     def _excluded(self, name: str) -> bool:
         return any(pat and pat in name for pat in self.excludes)
+
+    def _note_key(self, key_sources: dict, key: str, group: str, name: str) -> None:
+        """Record a key's source and warn (once) if a different group/name already
+        maps to the same sanitized key, since Gatus would silently overwrite one."""
+        prior = key_sources.get(key)
+        if prior is None:
+            key_sources[key] = (group, name)
+        elif prior != (group, name) and key not in self._warned_collisions:
+            logger.warning(
+                "key collision: %s and %s both map to %s, one overwrites the other in Gatus",
+                prior,
+                (group, name),
+                key,
+            )
+            self._warned_collisions.add(key)
 
     def _monitor_disabled(self, container) -> bool:
         """True if the container opted out of tier-2 monitoring with
@@ -152,6 +175,7 @@ class ContainerMonitor:
         declarations = []
         push_verdicts = []
         declared_keys: set[str] = set()
+        key_sources: dict[str, tuple] = {}
 
         # --- Liveness: every non-excluded container that has not opted out ---
         # Eligibility is cheap (labels/status); do it sequentially.
@@ -202,6 +226,7 @@ class ContainerMonitor:
                 decl["alerts"] = alerts
             declarations.append(decl)
             declared_keys.add(key)
+            self._note_key(key_sources, key, stack, name)
             push_verdicts.append((key, verdict))
             if self.store is not None:
                 self.store.update(key, stack, name, health, verdict, now)
@@ -245,12 +270,35 @@ class ContainerMonitor:
             due = (now - self._check_last_run.get(key, 0.0)) >= run_secs
             meta.append((chk, c, key, heartbeat, due))
 
-        # Run only the checks that are due this cycle, concurrently.
-        to_run = [(chk, c, key) for (chk, c, key, _hb, due) in meta if due]
+        # Run the due checks concurrently, but skip any whose previous run is
+        # still wedged (its exec thread has not returned), so a hung command does
+        # not stack orphan processes in the target container.
+        to_run = []
+        for chk, c, key, _hb, due in meta:
+            if not due:
+                continue
+            prev = self._check_inflight.get(key)
+            if prev is not None and prev.is_alive():
+                if key not in self._warned_inflight:
+                    logger.warning(
+                        "check %s is still running from a previous cycle, skipping this run", key
+                    )
+                    self._warned_inflight.add(key)
+                continue
+            self._warned_inflight.discard(key)
+            to_run.append((chk, c, key))
         if to_run:
             workers = min(self.max_workers, len(to_run))
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                results = list(pool.map(lambda it: (it[2], run_check(it[0], it[1])), to_run))
+                results = list(
+                    pool.map(
+                        lambda it: (
+                            it[2],
+                            run_check(it[0], it[1], registry=self._check_inflight, reg_key=it[2]),
+                        ),
+                        to_run,
+                    )
+                )
             for key, verdict in results:
                 self._check_last_run[key] = now
                 self._check_last_verdict[key] = verdict
@@ -272,6 +320,7 @@ class ContainerMonitor:
                 decl["alerts"] = alerts
             declarations.append(decl)
             declared_keys.add(key)
+            self._note_key(key_sources, key, chk.group, chk.name)
             verdict = self._check_last_verdict.get(key)
             if due and verdict is not None:
                 push_verdicts.append((key, verdict))
@@ -288,6 +337,8 @@ class ContainerMonitor:
         self._check_last_verdict = {
             k: v for k, v in self._check_last_verdict.items() if k in declared_keys
         }
+        self._warned_inflight &= declared_keys
+        self._warned_collisions &= declared_keys
         return declarations, push_verdicts
 
     def push_all(self, verdicts) -> int:

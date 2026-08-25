@@ -104,8 +104,10 @@ def build_alerts(types, description: str) -> list:
 
 # Gatus alert-object option fields, by coerced type. Anything else under
 # alerts.<n>.* is passed through as a stripped string so future Gatus options
-# work without a code change here.
-_ALERT_INT_FIELDS = {"failure-threshold", "success-threshold", "minimum-reminder-interval"}
+# work without a code change here. minimum-reminder-interval is a Gatus duration
+# (time.Duration), so it stays a string and is NOT coerced to an int, otherwise a
+# value like 10m would be dropped and 600 would decode as 600 nanoseconds.
+_ALERT_INT_FIELDS = {"failure-threshold", "success-threshold"}
 _ALERT_BOOL_FIELDS = {"send-on-resolved", "enabled"}
 _BOOL_TRUE = {"true", "1", "yes", "on"}
 _BOOL_FALSE = {"false", "0", "no", "off"}
@@ -194,11 +196,17 @@ def parse_alerts(fields: dict, default_description: str, context: str = "alerts"
     return [{"type": t, "description": desc} for t in types]
 
 
-def filter_alerts(alerts, allowlist: set, context: str) -> list:
-    """Drop alerts whose provider type is not in ``allowlist``, warning per drop.
+# Remembers which (context, provider) drops we have already warned about, so an
+# unconfigured provider warns once instead of every reconcile cycle. Cleared for a
+# provider once it is kept again (it got configured), so a later drop re-warns.
+_warned_drops: set = set()
 
-    ``alerts`` is a list of ``{type, description}`` dicts. Returns the kept list
-    (possibly empty).
+
+def filter_alerts(alerts, allowlist: set, context: str) -> list:
+    """Drop alerts whose provider type is not in ``allowlist``, warning once per
+    (context, provider) rather than every cycle.
+
+    ``alerts`` is a list of alert dicts. Returns the kept list (possibly empty).
     """
     if not alerts:
         return []
@@ -206,11 +214,18 @@ def filter_alerts(alerts, allowlist: set, context: str) -> list:
     dropped: list[dict] = []
     for a in alerts:
         (kept if a.get("type") in allowlist else dropped).append(a)
-    if dropped:
-        names = ",".join(a.get("type", "?") for a in dropped)
+    # A provider that is kept again has recovered, so allow it to warn if it is
+    # ever dropped later.
+    for a in kept:
+        _warned_drops.discard((context, a.get("type")))
+    new_dropped = [a for a in dropped if (context, a.get("type")) not in _warned_drops]
+    if new_dropped:
+        names = ",".join(a.get("type", "?") for a in new_dropped)
         logger.warning(
             "alerts: dropping unconfigured provider(s) %s for %s (not in Gatus alerting config)",
             names,
             context,
         )
+        for a in new_dropped:
+            _warned_drops.add((context, a.get("type")))
     return kept

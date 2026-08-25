@@ -32,7 +32,7 @@ import socket
 import threading
 from dataclasses import dataclass
 
-from .alerts import parse_alerts
+from .alerts import parse_alerts, sanitize_description
 from .duration import parse_duration_seconds
 from .health import Verdict
 
@@ -121,7 +121,12 @@ def parse_container_checks(
             fields, default_description=description, context=f"check {cid} on {container_name}"
         )
         if alerts is None:
-            alerts = list(default_alerts) if default_alerts else []
+            # Inherit the container's alerts, but the description names what is
+            # down, which is per check. Copy each dict (no shared aliasing with the
+            # container declaration) and stamp this check's own description onto it,
+            # keeping the inherited providers and thresholds.
+            check_desc = sanitize_description(description)
+            alerts = [dict(a, description=check_desc) for a in (default_alerts or [])]
 
         if "exec" in fields and str(fields.get("exec")).strip():
             if not exec_enabled:
@@ -175,9 +180,15 @@ def parse_container_checks(
     return checks, saw_disabled_exec
 
 
-def _with_timeout(fn, timeout):
+def _with_timeout(fn, timeout, registry=None, reg_key=None):
     """Run ``fn`` in a daemon thread, returning ``(value, error)``. A run that
-    outlives the timeout returns a TimeoutError (the thread is left to finish)."""
+    outlives the timeout returns a TimeoutError and the thread is left to finish.
+
+    When a ``registry`` dict and ``reg_key`` are given, the worker thread is
+    registered under that key while it runs and removed when it actually
+    finishes, even after a timeout. The caller can look at ``registry`` next cycle
+    to see a still-wedged run and avoid launching another (which would stack
+    orphan exec processes in the target container)."""
     box = {}
 
     def run():
@@ -185,8 +196,13 @@ def _with_timeout(fn, timeout):
             box["value"] = fn()
         except Exception as e:  # noqa: BLE001 - surfaced as the check error
             box["error"] = e
+        finally:
+            if registry is not None and reg_key is not None:
+                registry.pop(reg_key, None)
 
     t = threading.Thread(target=run, daemon=True)
+    if registry is not None and reg_key is not None:
+        registry[reg_key] = t
     t.start()
     t.join(timeout)
     if t.is_alive():
@@ -196,14 +212,14 @@ def _with_timeout(fn, timeout):
     return box.get("value"), None
 
 
-def evaluate_exec(container, command: str, timeout: float):
+def evaluate_exec(container, command: str, timeout: float, registry=None, reg_key=None):
     """Run ``command`` in ``container`` via /bin/sh. exit 0 = success. The
     container needs a shell for this (most non-scratch images have one)."""
 
     def _do():
         return container.exec_run(["/bin/sh", "-c", command], demux=False)
 
-    res, err = _with_timeout(_do, timeout)
+    res, err = _with_timeout(_do, timeout, registry=registry, reg_key=reg_key)
     if err is not None:
         return False, f"exec error: {err}"
     exit_code = getattr(res, "exit_code", None)
@@ -225,10 +241,14 @@ def evaluate_tcp(host: str, port: int, timeout: float):
         return False, f"tcp {host}:{port}: {e}"
 
 
-def run_check(check: Check, container) -> Verdict:
-    """Execute one check and return a Verdict (no headline metric)."""
+def run_check(check: Check, container, registry=None, reg_key=None) -> Verdict:
+    """Execute one check and return a Verdict (no headline metric). Only exec uses
+    the in-flight ``registry``, since a tcp check is already bounded by the socket
+    timeout and cannot orphan."""
     if check.kind == "exec":
-        success, detail = evaluate_exec(container, check.target, check.timeout)
+        success, detail = evaluate_exec(
+            container, check.target, check.timeout, registry=registry, reg_key=reg_key
+        )
     else:
         success, detail = evaluate_tcp(check.tcp_host, check.tcp_port, check.timeout)
     prefix = "" if success else "check failed: "

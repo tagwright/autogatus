@@ -78,10 +78,12 @@ def test_overrides_name_group_interval_timeout_alerts():
 
 
 def test_alerts_default_applied_when_absent():
+    # A cascaded check inherits the provider but stamps its own description
+    # (here the fallback, since no alert-description label is set).
     labels = {"autogatus.check.c.tcp": "80"}
     default = [{"type": "custom", "description": "d"}]
     c = parse_container_checks(labels, "app", "s", default_alerts=default)[0][0]
-    assert c.alerts == default
+    assert c.alerts == [{"type": "custom", "description": "app-c check"}]
 
 
 def test_multiple_checks_per_container_distinct_ids():
@@ -183,11 +185,14 @@ def test_description_legacy_alias_still_works():
 
 
 def test_check_inherits_default_alerts():
-    # cascade at the parse level: a check with no .alerts takes the passed default
+    # cascade at the parse level: a check with no .alerts inherits the provider,
+    # but the description names the check, not the container.
     labels = {"autogatus.check.x.tcp": "80"}
     default = [{"type": "ntfy", "description": "cascaded"}]
     c = parse_container_checks(labels, "app", "s", default_alerts=default)[0][0]
-    assert c.alerts == default
+    assert c.alerts == [{"type": "ntfy", "description": "app-x check"}]
+    # the passed-in default is not mutated (no shared aliasing)
+    assert default == [{"type": "ntfy", "description": "cascaded"}]
 
 
 def test_check_own_alerts_override_default():

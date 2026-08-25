@@ -22,6 +22,15 @@ Runtime robustness:
 - The generated file and the push token are written with `fsync`, so a hard power cut cannot leave them truncated or empty.
 - A sub-second resync interval is floored at one second instead of busy-looping.
 
+Alerts and checks correctness:
+
+- `minimum-reminder-interval` on a structured alert is now a Gatus duration string, not an int. Before, `10m` was dropped and `600` decoded as 600 nanoseconds.
+- A check that inherits its container's `autogatus.alerts` now keeps its own `alert-description`, so the alert names the failing check rather than the container. The inherited providers and thresholds are unchanged, and the container's own declaration is no longer aliased.
+- An unconfigured-provider warning fires once per endpoint and provider instead of every cycle, and clears if the provider is later configured.
+- A transient failure reading Gatus's config no longer strips every alert. The last good allowlist is cached and reused (with a single warning) rather than falling back and rewriting the config into a reload loop.
+- A wedged exec check is not relaunched while its previous run is still going, so a hung command no longer stacks orphan processes in the target container.
+- Two group/name inputs that sanitize to the same Gatus key now log a warning instead of silently overwriting each other.
+
 ## v00.01.00b1 (beta)
 
 First tagged release of autogatus. It has been running against a homelab of around ninety containers for a while, but this is an early build and the label and env names are not frozen yet.

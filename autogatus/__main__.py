@@ -22,7 +22,7 @@ import threading
 
 import docker
 
-from .alerts import parse_type_list, resolve_allowlist
+from .alerts import configured_providers, parse_type_list
 from .duration import parse_duration_seconds
 from .health import Thresholds
 from .logging_setup import register_secret, setup_logging
@@ -95,6 +95,11 @@ OUTPUT_BASENAME = os.path.basename(OUTPUT_PATH)
 
 _running = True
 _last_allowlist = None
+# The last allowlist we successfully derived from Gatus's config. If a later read
+# transiently fails (config mid-write, briefly unreadable), we reuse this instead
+# of dropping to the fallback, which would strip every alert and churn a reload.
+_cached_allowlist = None
+_warned_stale_config = False
 # Set by the signal handler so a sleeping loop wakes immediately instead of
 # waiting out the full resync interval and getting SIGKILLed past docker's grace.
 _stop_event = threading.Event()
@@ -250,13 +255,37 @@ def run() -> int:
     return 0
 
 
+def _resolve_allowlist():
+    """Derive the alert-provider allowlist, caching the last good read from Gatus's
+    config so a transient read failure does not strip alerts. Returns
+    ``(allowlist, source)``."""
+    global _cached_allowlist, _warned_stale_config
+    if GATUS_CONFIG_PATH:
+        configured = configured_providers(GATUS_CONFIG_PATH, skip_basename=OUTPUT_BASENAME)
+        if configured:
+            _cached_allowlist = configured
+            _warned_stale_config = False
+            return configured, f"gatus-config ({GATUS_CONFIG_PATH})"
+        if _cached_allowlist is not None:
+            if not _warned_stale_config:
+                logger.warning(
+                    "gatus config at %s is unreadable or has no alerting providers; "
+                    "reusing the last known allowlist rather than stripping alerts",
+                    GATUS_CONFIG_PATH,
+                )
+                _warned_stale_config = True
+            return _cached_allowlist, "gatus-config (cached)"
+        # Never read successfully yet, fall through to the startup fallback.
+    if ALERT_TYPES:
+        return set(ALERT_TYPES), "AUTOGATUS_ALERT_TYPES"
+    return {"custom"}, "default (custom)"
+
+
 def _tick(client, writer: Writer, monitor) -> None:
     global _last_allowlist
     # Re-derive each cycle so adding a provider to Gatus self-heals with no
     # restart. Log only when the resolved set changes.
-    allowlist, source = resolve_allowlist(
-        GATUS_CONFIG_PATH, ALERT_TYPES, skip_basename=OUTPUT_BASENAME
-    )
+    allowlist, source = _resolve_allowlist()
     if allowlist != _last_allowlist:
         logger.info("alert allowlist (%s): %s", source, ", ".join(sorted(allowlist)) or "(none)")
         _last_allowlist = allowlist
