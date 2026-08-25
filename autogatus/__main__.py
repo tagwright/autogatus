@@ -19,7 +19,6 @@ import secrets
 import signal
 import sys
 import threading
-import time
 
 import docker
 
@@ -29,7 +28,7 @@ from .health import Thresholds
 from .logging_setup import register_secret, setup_logging
 from .monitor import ContainerMonitor
 from .push import GatusPusher
-from .reconcile import Writer, gather_endpoints
+from .reconcile import DockerListError, Writer, gather_endpoints
 from .stackmap import load_stack_map
 from .store import Store
 
@@ -52,7 +51,9 @@ def _float_or_none(name: str):
 
 OUTPUT_PATH = os.environ.get("AUTOGATUS_OUTPUT", "/output/autogatus.yaml")
 DEFAULT_GROUP = os.environ.get("AUTOGATUS_DEFAULT_GROUP", "")
-INTERVAL = int(parse_duration_seconds(os.environ.get("AUTOGATUS_RESYNC_INTERVAL", "15s"), 15))
+# Floor at 1s: a sub-second value (e.g. 500ms -> 0) would busy-loop on dockerd.
+_RESYNC_SECS = parse_duration_seconds(os.environ.get("AUTOGATUS_RESYNC_INTERVAL", "15s"), 15)
+INTERVAL = max(1, int(_RESYNC_SECS))
 LOG_LEVEL = os.environ.get("AUTOGATUS_LOG_LEVEL", "INFO").upper()
 LOG_FORMAT = os.environ.get("AUTOGATUS_LOG_FORMAT", "text").lower()
 ACCESS_LOG_LEVEL = os.environ.get("AUTOGATUS_ACCESS_LOG_LEVEL", "INFO").upper()
@@ -94,12 +95,16 @@ OUTPUT_BASENAME = os.path.basename(OUTPUT_PATH)
 
 _running = True
 _last_allowlist = None
+# Set by the signal handler so a sleeping loop wakes immediately instead of
+# waiting out the full resync interval and getting SIGKILLed past docker's grace.
+_stop_event = threading.Event()
 
 
 def _handle_signal(signum, _frame):
     global _running
     logger.info("received signal %s, shutting down", signum)
     _running = False
+    _stop_event.set()
 
 
 def _start_web(store) -> None:
@@ -136,6 +141,8 @@ def _acquire_token() -> str:
         os.makedirs(os.path.dirname(token_path) or ".", exist_ok=True)
         with open(token_path, "w") as f:
             f.write(tok)
+            f.flush()
+            os.fsync(f.fileno())
         logger.info("generated and persisted a new push token to %s", token_path)
     except Exception as e:
         logger.warning("could not persist token (%s); using an in-memory one", e)
@@ -160,10 +167,14 @@ def run() -> int:
         MONITOR,
     )
 
+    # Long-lived state lives OUTSIDE the reconnect loop. A Docker reconnect swaps
+    # only the client, so the monitor keeps _seen_running, restart history, and
+    # check cadence. Rebuilding it on every reconnect would reclassify a
+    # currently-stopped container as never-seen and drop its outage from Gatus.
     writer = Writer(OUTPUT_PATH)
-
     store = None
     monitor = None
+    token = ""
     if MONITOR:
         store = Store()
         token = _acquire_token()
@@ -181,43 +192,60 @@ def run() -> int:
             ENABLE_EXEC,
         )
 
+    client = None
     while _running:
         try:
-            client = docker.from_env()
-            client.ping()
+            new_client = docker.from_env()
+            new_client.ping()
             logger.info(
-                "connected to Docker daemon (engine %s)", client.version().get("Version", "?")
+                "connected to Docker daemon (engine %s)", new_client.version().get("Version", "?")
             )
         except Exception as e:
             logger.warning("cannot reach Docker (%s); retrying in %ss", e, INTERVAL)
-            time.sleep(INTERVAL)
+            _stop_event.wait(INTERVAL)
             continue
 
+        # Close the old client before swapping so connection pools do not leak.
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+        client = new_client
+
         if MONITOR:
-            monitor = ContainerMonitor(
-                client=client,
-                pusher=GatusPusher(GATUS_URL, token, timeout=PUSH_TIMEOUT),
-                token=token,
-                stack_map=load_stack_map(STACK_MAP_PATH),
-                thresholds=Thresholds(mem_percent=MEM_THRESHOLD, cpu_percent=CPU_THRESHOLD),
-                excludes=EXCLUDES,
-                headline_metric=HEADLINE_METRIC,
-                heartbeat_interval=HEARTBEAT_INTERVAL,
-                default_group=DEFAULT_GROUP,
-                store=store,
-                default_alert_types=ALERT_TYPES or ["custom"],
-                exec_enabled=ENABLE_EXEC,
-                resync_interval=INTERVAL,
-            )
+            if monitor is None:
+                monitor = ContainerMonitor(
+                    client=client,
+                    pusher=GatusPusher(GATUS_URL, token, timeout=PUSH_TIMEOUT),
+                    token=token,
+                    stack_map=load_stack_map(STACK_MAP_PATH),
+                    thresholds=Thresholds(mem_percent=MEM_THRESHOLD, cpu_percent=CPU_THRESHOLD),
+                    excludes=EXCLUDES,
+                    headline_metric=HEADLINE_METRIC,
+                    heartbeat_interval=HEARTBEAT_INTERVAL,
+                    default_group=DEFAULT_GROUP,
+                    store=store,
+                    default_alert_types=ALERT_TYPES or ["custom"],
+                    exec_enabled=ENABLE_EXEC,
+                    resync_interval=INTERVAL,
+                )
+            else:
+                monitor.client = client
 
         try:
             while _running:
                 _tick(client, writer, monitor)
-                time.sleep(INTERVAL)
+                _stop_event.wait(INTERVAL)
         except Exception as e:
             logger.warning("loop error (%s); reconnecting", e)
-            time.sleep(min(INTERVAL, 10))
+            _stop_event.wait(min(INTERVAL, 10))
 
+    if client is not None:
+        try:
+            client.close()
+        except Exception:
+            pass
     logger.info("autogatus stopped")
     return 0
 
@@ -233,15 +261,17 @@ def _tick(client, writer: Writer, monitor) -> None:
         logger.info("alert allowlist (%s): %s", source, ", ".join(sorted(allowlist)) or "(none)")
         _last_allowlist = allowlist
 
+    # A Docker listing failure aborts the cycle WITHOUT writing, so the last-good
+    # config survives a daemon restart or hiccup. Writing an empty config here
+    # would make Gatus drop every endpoint and its heartbeat alerts.
     try:
         endpoints = gather_endpoints(client, default_group=DEFAULT_GROUP, allowlist=allowlist)
-    except Exception as e:
-        logger.error("label discovery failed: %s", e)
-        endpoints = []
-
-    declarations, verdicts = ([], [])
-    if monitor is not None:
-        declarations, verdicts = monitor.reconcile(allowlist=allowlist)
+        declarations, verdicts = ([], [])
+        if monitor is not None:
+            declarations, verdicts = monitor.reconcile(allowlist=allowlist)
+    except DockerListError as e:
+        logger.warning("docker listing failed (%s); keeping last config this cycle", e)
+        return
 
     # Write declarations first so Gatus loads them before we push their statuses.
     wrote = writer.reconcile(endpoints, external_endpoints=declarations)

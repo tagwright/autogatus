@@ -21,6 +21,7 @@ from .checks import parse_container_checks, run_check
 from .collector import collect_health
 from .duration import parse_duration_seconds
 from .health import Thresholds, evaluate
+from .reconcile import DockerListError
 
 logger = logging.getLogger("autogatus")
 
@@ -137,13 +138,14 @@ class ContainerMonitor:
         ``declarations`` are Gatus external-endpoint dicts; ``verdicts`` is a list
         of ``(key, Verdict)`` to push after Gatus has loaded the declarations.
         ``allowlist`` is the set of providers Gatus has configured; requested
-        alert channels not in it are dropped with a warning.
+        alert channels not in it are dropped with a warning. Raises
+        ``DockerListError`` if the daemon cannot be listed, so the caller keeps
+        the last-good config instead of writing an empty one.
         """
         try:
-            containers = self.client.containers.list(all=True)
+            containers = self.client.containers.list(all=True, ignore_removed=True)
         except Exception as e:
-            logger.warning("could not list containers: %s", e)
-            return [], []
+            raise DockerListError(str(e)) from e
 
         present = {c.name for c in containers}
         now = time.time()

@@ -101,7 +101,7 @@ class _RunClient:
         def __init__(self, outer):
             self._outer = outer
 
-        def list(self, all=False):
+        def list(self, all=False, ignore_removed=False):
             return self._outer._containers
 
     @property

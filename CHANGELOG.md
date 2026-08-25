@@ -13,6 +13,15 @@ A round of naming and behavior cleanup before the label and env interface freeze
 - Alerts now accept the full Gatus alert shape. Alongside the `alerts=custom,ntfy` shorthand there is a structured form, `alerts.<n>.type` with `failure-threshold`, `success-threshold`, `send-on-resolved`, and `description`, at all three alert sites. The structured form wins when its keys are present, and the shorthand still expands to a default alert per type. The cascade carries whole alert objects, not just the provider names.
 - Every time value takes a Go duration string now (`15s`, `5m`, `1h30m`), matching Gatus. `AUTOGATUS_RESYNC_INTERVAL` and `AUTOGATUS_PUSH_TIMEOUT` moved off bare seconds. A bare number is still read as seconds.
 
+Runtime robustness:
+
+- A Docker listing failure no longer wipes the config. Before, a daemon restart or hiccup made autogatus write an empty file, so Gatus dropped every endpoint and its heartbeat alerts. Now a failed listing skips the cycle and keeps the last-good config. Container listings also pass `ignore_removed`, so a container removed mid-cycle no longer raises.
+- Monitor state now survives a Docker reconnect. The store, monitor, and their history are built once, and a reconnect swaps only the client, so a currently-stopped container is not reclassified as never-seen and dropped from the dashboard. The old client is closed on reconnect.
+- Clean shutdown works. The loop waits on an event instead of sleeping, so SIGTERM stops it at once rather than waiting out the resync interval and being killed.
+- Tier-1 labeled endpoints are kept while the container exists but is stopped, so Gatus fails the probe and alerts, instead of the endpoint quietly vanishing. It drops only when the container is removed.
+- The generated file and the push token are written with `fsync`, so a hard power cut cannot leave them truncated or empty.
+- A sub-second resync interval is floored at one second instead of busy-looping.
+
 ## v00.01.00b1 (beta)
 
 First tagged release of autogatus. It has been running against a homelab of around ninety containers for a while, but this is an early build and the label and env names are not frozen yet.
