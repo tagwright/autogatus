@@ -14,7 +14,7 @@ services:
       - "8080:8080"
 
   autogatus:
-    image: ghcr.io/techgaud/autogatus:latest   # or build: ..
+    image: ghcr.io/tagwright/autogatus:latest   # or build: ..
     restart: unless-stopped
     environment:
       AUTOGATUS_OUTPUT: /output/autogatus.yaml

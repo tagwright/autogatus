@@ -1,5 +1,9 @@
 # Changelog
 
+## v00.01.00b3
+
+Moved to the tagwright org. The image now lives at `ghcr.io/tagwright/autogatus`, and every commit is authored under the project identity. No functional changes from b2.
+
 ## v00.01.00b2
 
 A round of naming and behavior cleanup before the label and env interface freezes at 1.0.

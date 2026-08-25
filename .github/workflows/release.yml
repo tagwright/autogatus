@@ -68,7 +68,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/techgaud/autogatus
+          images: ghcr.io/tagwright/autogatus
           # Tag the image with the exact git tag and with latest. latest is
           # forced on for this first release because the README points people at
           # :latest, so it must resolve. Once a stable (non pre-release) version

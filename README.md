@@ -24,7 +24,7 @@ Full example in [`examples/docker-compose.yml`](examples/docker-compose.yml). Th
 
 ```yaml
 autogatus:
-  image: ghcr.io/techgaud/autogatus:latest
+  image: ghcr.io/tagwright/autogatus:latest
   volumes:
     - /var/run/docker.sock:/var/run/docker.sock:ro
     - gatus-generated:/output          # Gatus mounts the same volume at /config/generated
