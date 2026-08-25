@@ -5,7 +5,13 @@ description = "Docker-label service discovery for Gatus. Autokuma, but for Gatus
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
-dependencies = ["docker>=7.0.0", "PyYAML>=6.0"]
+dependencies = [
+    "docker>=7.0.0",
+    "PyYAML>=6.0",
+    "flask>=3.0.0",
+    "waitress>=3.0.0",
+    "requests>=2.28.0",
+]
 
 [project.scripts]
 autogatus = "autogatus.__main__:run"

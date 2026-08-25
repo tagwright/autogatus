@@ -38,6 +38,9 @@ from .health import Verdict
 
 logger = logging.getLogger("autogatus")
 
+# Deduped: warn once per (container, id) when the old `description` key is used.
+_warned_desc_alias: set = set()
+
 PREFIX = "autogatus.check."
 DEFAULT_TIMEOUT = 5.0
 
@@ -113,6 +116,16 @@ def parse_container_checks(
         description = (
             fields.get("alert-description") or fields.get("description") or f"{name} check"
         ).strip()
+        if "description" in fields and "alert-description" not in fields:
+            tag = f"{container_name}.{cid}"
+            if tag not in _warned_desc_alias:
+                logger.warning(
+                    "autogatus.check.%s.description on %s is deprecated and will be "
+                    "removed at 1.0, use alert-description",
+                    cid,
+                    container_name,
+                )
+                _warned_desc_alias.add(tag)
         timeout = parse_duration_seconds(fields.get("timeout"), DEFAULT_TIMEOUT)
         # A check's own alerts (shorthand or structured), else it inherits the
         # container's autogatus.alerts, else the global default. `none` on the

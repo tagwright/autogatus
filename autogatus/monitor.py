@@ -18,9 +18,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 from .alerts import build_alerts, filter_alerts, parse_alerts
 from .checks import parse_container_checks, run_check
-from .collector import collect_health
+from .collector import _uptime_seconds, collect_health
 from .duration import parse_duration_seconds
-from .health import Thresholds, evaluate
+from .health import Thresholds, Verdict, evaluate
 from .reconcile import DockerListError
 
 logger = logging.getLogger("autogatus")
@@ -33,6 +33,11 @@ ALERTS_LABEL = "autogatus.alerts"
 # of tier-2 auto monitoring. Declared autogatus.check.* checks still run regardless.
 ENABLE_LABEL = "autogatus.enable"
 _FALSE = {"false", "0", "no", "off"}
+# Per-container threshold overrides for tier-2 evaluation (percent, none disables).
+MEM_THRESHOLD_LABEL = "autogatus.mem-threshold"
+CPU_THRESHOLD_LABEL = "autogatus.cpu-threshold"
+# Startup grace: suppress a container's alerts while its uptime is under this.
+SNOOZE_LABEL = "autogatus.snooze"
 
 _SAFE = re.compile(r"[^a-zA-Z0-9_-]+")
 # Gatus builds an endpoint key by sanitizing group and name (underscores and
@@ -66,6 +71,7 @@ class ContainerMonitor:
         default_alert_types=None,
         exec_enabled=False,
         resync_interval: int = 15,
+        failure_latch: int = 3,
     ):
         self.client = client
         self.pusher = pusher
@@ -83,7 +89,13 @@ class ContainerMonitor:
         self.default_alert_types = list(default_alert_types) if default_alert_types else ["custom"]
         self.exec_enabled = exec_enabled
         self.resync_interval = resync_interval
+        self.failure_latch = failure_latch
         self._warned_exec_disabled = False
+        # Point-in-time failures (OOM, a restart bump) show for one cycle then
+        # recover, so Gatus's default failure-threshold of 3 never fires. Latch
+        # them failing for a few cycles. name -> [remaining_cycles, reason].
+        self._latched: dict[str, list] = {}
+        self._warned_bad_threshold: set[str] = set()
         self._seen_running: set[str] = set()
         self._prev_restart: dict[str, int] = {}
         # Checks run on their own cadence, so remember when each last ran and its
@@ -130,6 +142,69 @@ class ContainerMonitor:
         if self.default_group:
             return _safe(self.default_group)
         return _safe(container.name)
+
+    def _threshold_label(self, labels, key, default):
+        if key not in labels:
+            return default
+        raw = str(labels[key]).strip().lower()
+        if raw in {"", "none", "off", "disabled"}:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            if key not in self._warned_bad_threshold:
+                logger.warning("bad %s=%r, using the global default", key, labels[key])
+                self._warned_bad_threshold.add(key)
+            return default
+
+    def _thresholds_for(self, container):
+        """The container's Thresholds, with autogatus.mem-threshold /
+        autogatus.cpu-threshold overriding the globals when present."""
+        labels = container.labels or {}
+        mem = self._threshold_label(labels, MEM_THRESHOLD_LABEL, self.thresholds.mem_percent)
+        cpu = self._threshold_label(labels, CPU_THRESHOLD_LABEL, self.thresholds.cpu_percent)
+        if mem == self.thresholds.mem_percent and cpu == self.thresholds.cpu_percent:
+            return self.thresholds
+        return Thresholds(
+            mem_percent=mem,
+            cpu_percent=cpu,
+            fail_on_restart=self.thresholds.fail_on_restart,
+            fail_on_unhealthy=self.thresholds.fail_on_unhealthy,
+        )
+
+    def _snoozed(self, container) -> bool:
+        """True while a container's uptime is under its autogatus.snooze window,
+        so a deploy or restart does not page during the settling period."""
+        val = (container.labels or {}).get(SNOOZE_LABEL)
+        if not val or str(val).strip().lower() in {"", "none", "0"}:
+            return False
+        window = parse_duration_seconds(val, 0.0)
+        if window <= 0:
+            return False
+        state = (getattr(container, "attrs", None) or {}).get("State", {}) or {}
+        up = _uptime_seconds(state.get("StartedAt", ""))
+        return up is not None and up < window
+
+    def _apply_latch(self, name, health, prev_restart, verdict):
+        """Arm a latch on a point-in-time event (OOM or a restart bump) and, while
+        a latch is active, force the verdict failing so Gatus's threshold can fire."""
+        restarted = prev_restart is not None and health.restart_count > prev_restart
+        oom = health.state == "running" and health.oom_killed
+        if (restarted or oom) and self.failure_latch > 0:
+            reason = "OOMKilled" if oom else f"restarted ({prev_restart}->{health.restart_count})"
+            self._latched[name] = [self.failure_latch, reason]
+        latch = self._latched.get(name)
+        if not latch:
+            return verdict
+        latch[0] -= 1
+        if latch[0] <= 0:
+            self._latched.pop(name, None)
+        if verdict.success:
+            reason = latch[1]
+            return Verdict(
+                False, f"{reason} (latched) | {verdict.error}", verdict.headline, [reason]
+            )
+        return verdict
 
     @staticmethod
     def _container_alert_fields(labels: dict) -> dict:
@@ -203,12 +278,14 @@ class ContainerMonitor:
                 healths = list(pool.map(_collect, worklist))
 
         for c, stack, health in healths:
+            prev_restart = self._prev_restart.get(c.name)
             verdict = evaluate(
                 health,
-                self.thresholds,
-                prev_restart_count=self._prev_restart.get(c.name),
+                self._thresholds_for(c),
+                prev_restart_count=prev_restart,
                 headline_metric=self.headline_metric,
             )
+            verdict = self._apply_latch(c.name, health, prev_restart, verdict)
             self._prev_restart[c.name] = health.restart_count
             name = c.name
             key = _gatus_key(stack, name)
@@ -218,7 +295,8 @@ class ContainerMonitor:
                 "token": self.token,
                 "heartbeat": {"interval": self.heartbeat_interval},
             }
-            requested = self._alerts_for(c)
+            # While snoozed, still push status but leave off the alerts block.
+            requested = [] if self._snoozed(c) else self._alerts_for(c)
             alerts = (
                 filter_alerts(requested, allowlist, key) if allowlist is not None else requested
             )
@@ -312,7 +390,7 @@ class ContainerMonitor:
                 "token": self.token,
                 "heartbeat": {"interval": heartbeat},
             }
-            requested = chk.alerts or []
+            requested = [] if self._snoozed(_c) else (chk.alerts or [])
             alerts = (
                 filter_alerts(requested, allowlist, key) if allowlist is not None else requested
             )
@@ -333,6 +411,7 @@ class ContainerMonitor:
         # Forget containers and checks that no longer exist.
         self._seen_running &= present
         self._prev_restart = {k: v for k, v in self._prev_restart.items() if k in present}
+        self._latched = {k: v for k, v in self._latched.items() if k in present}
         self._check_last_run = {k: v for k, v in self._check_last_run.items() if k in declared_keys}
         self._check_last_verdict = {
             k: v for k, v in self._check_last_verdict.items() if k in declared_keys

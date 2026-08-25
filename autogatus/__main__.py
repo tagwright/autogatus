@@ -84,6 +84,9 @@ MEM_THRESHOLD = (
     _float_or_none("AUTOGATUS_MEM_THRESHOLD") if "AUTOGATUS_MEM_THRESHOLD" in os.environ else 95.0
 )
 CPU_THRESHOLD = _float_or_none("AUTOGATUS_CPU_THRESHOLD")
+# Cycles to hold a point-in-time failure (OOM, restart bump) failing so Gatus's
+# default failure-threshold of 3 can fire on it.
+FAILURE_LATCH = max(0, int(os.environ.get("AUTOGATUS_FAILURE_LATCH", "3")))
 
 # Alert routing: which Gatus providers each endpoint may fire. The allowlist is
 # derived from Gatus's own configured providers when AUTOGATUS_GATUS_CONFIG points
@@ -234,6 +237,7 @@ def run() -> int:
                     default_alert_types=ALERT_TYPES or ["custom"],
                     exec_enabled=ENABLE_EXEC,
                     resync_interval=INTERVAL,
+                    failure_latch=FAILURE_LATCH,
                 )
             else:
                 monitor.client = client

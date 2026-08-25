@@ -31,6 +31,14 @@ Alerts and checks correctness:
 - A wedged exec check is not relaunched while its previous run is still going, so a hung command no longer stacks orphan processes in the target container.
 - Two group/name inputs that sanitize to the same Gatus key now log a warning instead of silently overwriting each other.
 
+Features and per-container tuning:
+
+- Added `autogatus.mem-threshold` and `autogatus.cpu-threshold` labels to override the global thresholds for one container. A percent, or `none` to disable that threshold for the container.
+- Added `autogatus.snooze=<duration>` as a startup grace. While a container's uptime is under the window, its alerts and its checks' alerts are suppressed, so a deploy or restart does not page. Status is still pushed.
+- Added `AUTOGATUS_FAILURE_LATCH` (default 3). A restart bump or an OOM kill is a point-in-time event that recovers after one cycle, so on its own it never crossed Gatus's default failure-threshold. autogatus now holds it failing for that many cycles so the alert fires.
+- `pyproject.toml` now lists `flask`, `waitress`, and `requests`, which the code imports. A `pip install .` with monitoring on no longer crashes at startup.
+- Marked the deprecated aliases as removed at 1.0 in the docs, and the `autogatus.check.<id>.description` label alias now logs a one-time deprecation warning like the env alias already did.
+
 ## v00.01.00b1 (beta)
 
 First tagged release of autogatus. It has been running against a homelab of around ninety containers for a while, but this is an early build and the label and env names are not frozen yet.

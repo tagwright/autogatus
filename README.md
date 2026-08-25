@@ -77,6 +77,10 @@ autogatus sets a Gatus heartbeat on each endpoint. If autogatus stops pushing, t
 
 **Thresholds.** Memory pressure and restart loops fail by default, since both mean the container is about to fall over. CPU is reported but never fails on its own unless you set `AUTOGATUS_CPU_THRESHOLD`. A container can run hot for a while without being broken.
 
+**Per-container tuning.** The global thresholds are wrong for at least one container in every homelab, a JVM or a transcoder that sits high on purpose. Override them on that one container with `autogatus.mem-threshold` or `autogatus.cpu-threshold` (a percent, or `none` to disable that threshold for the container). During a deploy or a restart, `autogatus.snooze=2m` suppresses that container's alerts, and its checks' alerts, until its uptime passes the window, so a settling service does not page. Status is still pushed the whole time, only the alerting waits.
+
+**Point-in-time failures.** A restart or an OOM kill shows for one cycle and then recovers, which on its own would never cross Gatus's default failure-threshold of 3. autogatus latches such an event failing for `AUTOGATUS_FAILURE_LATCH` cycles (default 3) so the alert fires. Continuous failures like memory pressure or a stopped container already persist and are not latched.
+
 Gatus holds three things per endpoint: availability history, one graphed number, and a status string. That is the ceiling here. For real CPU, memory, and network time series with graphs, put Prometheus in front of a metrics exporter fed by the same stats autogatus already collects. That exporter is planned. Gatus stays the status layer.
 
 ## Detail view
@@ -105,7 +109,7 @@ labels:
   gatus.web.alerts.1.type: "custom"
 ```
 
-The per-alert keys are Gatus's own: `type`, `failure-threshold`, `success-threshold`, `send-on-resolved`, `description`. For the shorthand, `gatus.<id>.alert-description` (and the check equivalent) sets the description. For the structured form, each alert's own `.description` wins. Anything you do not set, Gatus fills from its per-provider `default-alert`.
+The per-alert keys are Gatus's own: `type`, `failure-threshold`, `success-threshold`, `send-on-resolved`, `description`. For the shorthand, `gatus.<id>.alert-description` (and the check equivalent) sets the description. For the structured form, each alert's own `.description` wins. autogatus always sets a description from that chain, so Gatus never fills that one, but it does fill the other options you leave unset from its per-provider `default-alert`. These are Gatus's flat scalar alert fields only. A nested option like `provider-override` is a map in Gatus and cannot be expressed through the flat label form, so do not assume every Gatus alert option is reachable this way.
 
 A provider only fires if it is configured in Gatus's own `alerting:` section. autogatus names providers, it does not define them, so a label pointing at a provider Gatus has never heard of would be a dead alert. To catch that, autogatus builds an allowlist of the providers Gatus actually has configured and drops anything outside it:
 
@@ -128,7 +132,7 @@ Add checks to a container with `autogatus.check.<id>.*` labels:
 | `autogatus.check.<id>.group` | Dashboard group (default the container's stack) |
 | `autogatus.check.<id>.interval` | How often the check runs (default the resync interval). The endpoint heartbeat is derived from it |
 | `autogatus.check.<id>.timeout` | Check timeout, a duration (default `5s`) |
-| `autogatus.check.<id>.alert-description` | Alert description (old key `description` still works) |
+| `autogatus.check.<id>.alert-description` | Alert description (old key `description` is deprecated and removed at 1.0) |
 | `autogatus.check.<id>.alerts` | Gatus providers, shorthand or structured, same routing as everything else |
 
 A headless `cloudflare-ddns` container, checked by a command run inside it:
@@ -172,8 +176,9 @@ A tcp check dials from autogatus's own network position, so autogatus has to sha
 | `AUTOGATUS_HEARTBEAT_INTERVAL` | `90s` | No push within this and Gatus marks the container down |
 | `AUTOGATUS_MEM_THRESHOLD` | `95` | Fail over this % of memory limit (blank or `none` disables) |
 | `AUTOGATUS_CPU_THRESHOLD` | *(disabled)* | Fail over this CPU % if set |
+| `AUTOGATUS_FAILURE_LATCH` | `3` | Cycles to hold a restart or OOM event failing so Gatus's threshold fires |
 | `AUTOGATUS_EXCLUDE` | `autogatus,claude-code` | Comma-separated name substrings to skip |
-| `AUTOGATUS_ENABLE_EXEC` | `false` | Global opt-in for `autogatus.check.<id>.exec` (runs commands in containers). Old name `AUTOGATUS_EXEC_CHECKS` still works |
+| `AUTOGATUS_ENABLE_EXEC` | `false` | Global opt-in for `autogatus.check.<id>.exec` (runs commands in containers). Old name `AUTOGATUS_EXEC_CHECKS` is deprecated and removed at 1.0 |
 | `AUTOGATUS_GATUS_CONFIG` | *(none)* | Path to Gatus's config (file or dir), used to build the alert-provider allowlist |
 | `AUTOGATUS_ALERT_TYPES` | `custom` | Default alert channels for monitored containers, and the allowlist fallback |
 | `AUTOGATUS_WEB` | `true` | Serve the `/details` detail view |
