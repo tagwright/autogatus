@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v00.01.00b2
 
 A round of naming and behavior cleanup before the label and env interface freezes at 1.0.
 
