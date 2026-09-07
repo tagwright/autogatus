@@ -1,0 +1,11 @@
+# Example stacks map: compose service name -> stack (top-level project dir).
+# autogatus reads this via AUTOGATUS_STACK_MAP so container endpoints can be
+# grouped by stack in Gatus. One entry per service; the value is the group.
+# Replace these with your own service and stack names.
+stacks:
+  web: frontend
+  api: backend
+  worker: backend
+  db: data
+  cache: data
+  proxy: edge

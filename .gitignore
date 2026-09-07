@@ -4,7 +4,9 @@ __pycache__/
 *.egg-info/
 .venv/
 output/
-stacks.yml
+# root stacks.yml is the operator's real stack map, generated/provided at deploy.
+# Anchored to root so examples/stacks.yml (the generic sample) stays tracked.
+/stacks.yml
 .coverage
 .ruff_cache/
 .mypy_cache/
