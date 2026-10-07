@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v00.01.00b4
 
 A way to say a container is stopped on purpose, declared on the service itself.
 
