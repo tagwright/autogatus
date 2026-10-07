@@ -6,6 +6,13 @@ Behaviour that keeps the dashboard honest:
   crashes or is stopped keeps its endpoint and flips to failing (with a
   heartbeat backstop), while a one-shot that merely exited before we ever saw it
   run is not monitored (no phantom "down" rows).
+- A container labeled autogatus.offline=true is always declared, even one never
+  seen running, so its Gatus history survives an autogatus restart. While it is
+  parked (created by docker compose up --no-start and never started since) its
+  liveness and check endpoints are frozen: declared with enabled: false and no
+  alerts, and nothing is pushed to them. Running, restarting or paused with the
+  label is drift and pages. Any other state with the label (it has run since it
+  was created) is monitored normally, with a hint on how to re-park it.
 - If a container is removed entirely, its declaration is dropped.
 """
 
@@ -21,6 +28,7 @@ from .checks import parse_container_checks, run_check
 from .collector import _uptime_seconds, collect_health
 from .duration import parse_duration_seconds
 from .health import Thresholds, Verdict, evaluate
+from .offline import LIVE, NONE, PARKED, RAN, classify, drift_verdict, parked_verdict, ran_verdict
 from .reconcile import DockerListError
 
 logger = logging.getLogger("autogatus")
@@ -31,6 +39,9 @@ ALERTS_LABEL = "autogatus.alerts"
 # Per-container opt-out of tier-2 auto monitoring. Note the polarity: gatus.enable
 # opts a container INTO tier-1 probed endpoints, autogatus.enable=false opts it OUT
 # of tier-2 auto monitoring. Declared autogatus.check.* checks still run regardless.
+# autogatus.offline=true (see offline.py) is separate again: it never adds a
+# liveness endpoint to an opted-out or excluded container, but it still freezes
+# that container's checks while it is parked and drops its tier-1 alerts.
 ENABLE_LABEL = "autogatus.enable"
 _FALSE = {"false", "0", "no", "off"}
 # Per-container threshold overrides for tier-2 evaluation (percent, none disables).
@@ -128,6 +139,26 @@ class ContainerMonitor:
                 key,
             )
             self._warned_collisions.add(key)
+
+    @staticmethod
+    def _offline_class(container) -> str:
+        return classify(container.labels or {}, getattr(container, "attrs", None))
+
+    def _eligible(self, container, oclass: str) -> bool:
+        """Whether a container gets a liveness endpoint this cycle. A container
+        declared offline always does, in every class, even one never seen
+        running, so its endpoint and its Gatus history survive an autogatus
+        restart. Anything else keeps the one-shot rule: declared once seen
+        running."""
+        if oclass != NONE:
+            return True
+        return container.name in self._seen_running
+
+    @staticmethod
+    def _frozen(oclass: str) -> bool:
+        """A parked container's liveness and check endpoints are frozen:
+        declared with enabled: false and no alerts, and never pushed."""
+        return oclass == PARKED
 
     def _monitor_disabled(self, container) -> bool:
         """True if the container opted out of tier-2 monitoring with
@@ -252,6 +283,10 @@ class ContainerMonitor:
         declared_keys: set[str] = set()
         key_sources: dict[str, tuple] = {}
 
+        # The autogatus.offline class of every container, read fresh each cycle
+        # from the label and Docker's own state. Nothing about it is remembered.
+        classes = {c.name: self._offline_class(c) for c in containers}
+
         # --- Liveness: every non-excluded container that has not opted out ---
         # Eligibility is cheap (labels/status); do it sequentially.
         worklist = []
@@ -261,8 +296,8 @@ class ContainerMonitor:
             running = c.status == "running"
             if running:
                 self._seen_running.add(c.name)
-            elif c.name not in self._seen_running:
-                continue  # never observed running -> one-shot, skip
+            if not self._eligible(c, classes[c.name]):
+                continue  # undeclared and never observed running -> one-shot, skip
             worklist.append((c, running, self._stack_for(c)))
 
         # Stats collection is the slow part (one daemon call per container), so
@@ -278,6 +313,28 @@ class ContainerMonitor:
                 healths = list(pool.map(_collect, worklist))
 
         for c, stack, health in healths:
+            oclass = classes[c.name]
+            name = c.name
+            key = _gatus_key(stack, name)
+            decl = {
+                "name": name,
+                "group": stack,
+                "token": self.token,
+                "heartbeat": {"interval": self.heartbeat_interval},
+            }
+            if self._frozen(oclass):
+                # Parked: still declared, so Gatus keeps the endpoint and its
+                # history, but disabled (no heartbeat check) with no alerts, and
+                # nothing is pushed, so the row holds its last result and pages
+                # nobody. The latch is not armed. The store shows why.
+                decl["enabled"] = False
+                self._prev_restart[name] = health.restart_count
+                declarations.append(decl)
+                declared_keys.add(key)
+                self._note_key(key_sources, key, stack, name)
+                if self.store is not None:
+                    self.store.update(key, stack, name, health, parked_verdict(), now)
+                continue
             prev_restart = self._prev_restart.get(c.name)
             verdict = evaluate(
                 health,
@@ -287,14 +344,10 @@ class ContainerMonitor:
             )
             verdict = self._apply_latch(c.name, health, prev_restart, verdict)
             self._prev_restart[c.name] = health.restart_count
-            name = c.name
-            key = _gatus_key(stack, name)
-            decl = {
-                "name": name,
-                "group": stack,
-                "token": self.token,
-                "heartbeat": {"interval": self.heartbeat_interval},
-            }
+            if oclass == LIVE:
+                verdict = drift_verdict(verdict, health.state)
+            elif oclass == RAN:
+                verdict = ran_verdict(verdict)
             # While snoozed, still push status but leave off the alerts block.
             requested = [] if self._snoozed(c) else self._alerts_for(c)
             alerts = (
@@ -345,14 +398,23 @@ class ContainerMonitor:
             key = _gatus_key(chk.group, chk.name)
             run_secs = parse_duration_seconds(chk.interval, float(self.resync_interval))
             heartbeat = f"{max(int(run_secs * 3), 30)}s"
-            due = (now - self._check_last_run.get(key, 0.0)) >= run_secs
-            meta.append((chk, c, key, heartbeat, due))
+            frozen = self._frozen(classes.get(c.name, NONE))
+            if frozen:
+                # A parked container's checks never run (an exec into a created
+                # container fails and a dial would only report the stop). Its
+                # last-run time is dropped rather than advanced, so each check is
+                # due on the first cycle after the container stops being parked.
+                self._check_last_run.pop(key, None)
+                due = False
+            else:
+                due = (now - self._check_last_run.get(key, 0.0)) >= run_secs
+            meta.append((chk, c, key, heartbeat, due, frozen))
 
         # Run the due checks concurrently, but skip any whose previous run is
         # still wedged (its exec thread has not returned), so a hung command does
         # not stack orphan processes in the target container.
         to_run = []
-        for chk, c, key, _hb, due in meta:
+        for chk, c, key, _hb, due, _is_frozen in meta:
             if not due:
                 continue
             prev = self._check_inflight.get(key)
@@ -383,13 +445,21 @@ class ContainerMonitor:
 
         # Declare every check; push only the ones that ran this cycle. Between
         # runs the last verdict keeps the endpoint alive in the store.
-        for chk, _c, key, heartbeat, due in meta:
+        for chk, _c, key, heartbeat, due, frozen in meta:
             decl = {
                 "name": chk.name,
                 "group": chk.group,
                 "token": self.token,
                 "heartbeat": {"interval": heartbeat},
             }
+            if frozen:
+                decl["enabled"] = False
+                declarations.append(decl)
+                declared_keys.add(key)
+                self._note_key(key_sources, key, chk.group, chk.name)
+                if self.store is not None:
+                    self.store.update(key, chk.group, chk.name, None, parked_verdict(), now)
+                continue
             requested = [] if self._snoozed(_c) else (chk.alerts or [])
             alerts = (
                 filter_alerts(requested, allowlist, key) if allowlist is not None else requested
