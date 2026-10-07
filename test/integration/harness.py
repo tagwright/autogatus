@@ -771,17 +771,27 @@ def h11(ctx: Run) -> None:
     tup("up", "-d", S1)
     check(inspect_state(T1)["State"]["Status"] == "running", "t1 live while Gatus is down")
 
+    # Wait for t1's own failed push. t2 is still pushing too, so the first
+    # failed cycle after Gatus stops may be t2's alone.
+    def t1_failed():
+        for ts, x in container_logs(AG, t):
+            if f"push failed for {K1}:" in x:
+                return ts, x
+        return None
+
+    t_fail, fail_line = wait_until(t1_failed, 30, "a failed push for t1")
+    check("error=drift" in fail_line, "autogatus logged the failed drift push for t1")
+
     def failed_summary():
-        for _, line in container_logs(AG, t):
+        for ts, line in container_logs(AG, t_fail - 1):
             m = re.search(r"reconcile: (\d+) monitored, (\d+) pushed, (\d+) failed", line)
-            if m and int(m.group(3)) > 0:
+            if ts >= t_fail and m and int(m.group(3)) > 0:
                 return line
         return None
 
-    line = wait_until(failed_summary, 30, "a cycle summary with failed pushes")
+    line = wait_until(failed_summary, 15, "the cycle summary counting it")
     log(f"  {line.strip()[:160]}")
-    fails = [x for _, x in container_logs(AG, t) if f"push failed for {K1}:" in x]
-    check(fails != [], "autogatus logged the failed drift push for t1")
+    check(True, "the cycle summary counts the failed drift push")
     hold(3 * RESYNC, "a few failing cycles")
     t_up = time.time()
     dd("start", GATUS)
