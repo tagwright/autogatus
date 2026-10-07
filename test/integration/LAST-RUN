@@ -1,0 +1,25 @@
+# Live integration harness attestation (tagwright Testing Standard, task #548).
+#
+# autogatus's harness is operator-run (CI is GitHub-hosted, with no Docker
+# socket), so every scenario below is in the operator-run bucket and is only
+# valid for the sha it was produced at. Written by test/integration/harness.py
+# at the end of a run, against git archive of that sha.
+
+sha: 2b0ee2e346468d0dcef1c18162771fcfb323f241
+date: 2026-10-07
+harness: test/integration/harness.py
+dind: docker:29.8.0-dind engine 29.8.0 compose 5.5.1
+gatus: ghcr.io/twin/gatus:v5.36.0
+
+operator_run:
+  H1: pass  # park and freeze
+  H2: pass  # autogatus restart while parked
+  H3: pass  # parked to live
+  H4: pass  # live to parked on a running container
+  H5: pass  # drift resolved by unlabeling
+  H6: pass  # live to ran
+  H7: pass  # ran to parked
+  H8: pass  # parked to ran by a failed start
+  H9: pass  # checks and tier-1 while parked
+  H10: pass  # stray push
+  H11: pass  # failure path, Gatus down while parked to live

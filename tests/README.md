@@ -59,7 +59,7 @@ Standard.
 | 1, pure | `autogatus/offline.py`: value grammar, the parked/live/ran classifier over every Docker status times StartedAt times `State.Error`, the verdict texts (`tests/test_offline.py`) | proven |
 | 2, wiring | Through `__main__._tick` with a real `ContainerMonitor`, a real `Writer` on a temp path, a scripted fake Docker client and a recording pusher (`tests/fakes.py`, `tests/test_offline_wiring.py`). An autogatus restart is simulated as `run()` starts up, with a new monitor and writer. The listing and the push each have a fault knob and a surfacing test (F1, F2). The no-label output is checked against a golden recorded from the code before the label existed (`tests/golden/no_label_fleet.json`) | proven |
 | 3, guards | The five guards above, each with its committed negative fixture (`tests/test_offline_guards.py`) | proven |
-| Live harness | H1 to H11 against real Gatus v5.36.0 in a throwaway dind (`test/integration/`) | operator-run, last run at sha PENDING on date PENDING |
+| Live harness | H1 to H11 against real Gatus v5.36.0 in a throwaway dind (`test/integration/`) | operator-run, last run at sha 2b0ee2e346468d0dcef1c18162771fcfb323f241 on date 2026-10-07 (attested in `test/integration/LAST-RUN`) |
 
 Not driven at Level 2: `run()`'s reconnect loop. The tests call `_tick` directly,
 so a Docker reconnect (which keeps the monitor and swaps only the client) is not
