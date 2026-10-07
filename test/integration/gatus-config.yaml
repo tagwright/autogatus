@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# Base Gatus config for the live harness. autogatus writes its generated file
+# into the generated/ directory beside this one, and Gatus merges both.
+storage:
+  type: sqlite
+  path: /data/data.db
+  # High enough that no result written during a run is ever trimmed, so the
+  # harness can check that history survives.
+  maximum-number-of-results: 5000
+
+alerting:
+  custom:
+    url: "http://autogatus-itest-sink:8080/alert?state=[ALERT_TRIGGERED_OR_RESOLVED]&group=[ENDPOINT_GROUP]&name=[ENDPOINT_NAME]"
+    method: "POST"
+    body: "[ALERT_DESCRIPTION]"
+    default-alert:
+      failure-threshold: 2
+      success-threshold: 1
+      send-on-resolved: true
+
+# Gatus refuses a config with no endpoint at all, so probe the sink.
+endpoints:
+  - name: sink
+    group: itest-base
+    url: "http://autogatus-itest-sink:8080/health"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"

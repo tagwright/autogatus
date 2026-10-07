@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+# Override for examples/docker-compose.yml, so the harness drives the shipped
+# example compose with the image built from the commit under test. Run inside
+# the throwaway dind only. Paths under /work and /src are inside that dind.
+services:
+  gatus:
+    image: ghcr.io/twin/gatus:v5.36.0
+    container_name: autogatus-itest-gatus
+    labels:
+      autogatus.enable: "false"
+    ports: !override
+      - "127.0.0.1:18080:8080"
+    volumes: !override
+      - /work/gatus:/config:ro
+      - gatus-generated:/config/generated:ro
+      - gatus-data:/data
+
+  autogatus:
+    image: autogatus-itest-ag:${ITEST_TAG:?}
+    pull_policy: never
+    container_name: autogatus-itest-ag
+    labels:
+      autogatus.enable: "false"
+    environment:
+      AUTOGATUS_MONITOR_CONTAINERS: "true"
+      AUTOGATUS_GATUS_URL: http://gatus:8080
+      AUTOGATUS_PUSH_TOKEN: ${ITEST_TOKEN:?}
+      AUTOGATUS_RESYNC_INTERVAL: "2s"
+      AUTOGATUS_HEARTBEAT_INTERVAL: "30s"
+      AUTOGATUS_ENABLE_EXEC: "true"
+      AUTOGATUS_EXCLUDE: autogatus-itest-ag
+      AUTOGATUS_LOG_LEVEL: DEBUG
+      AUTOGATUS_WEB: "false"
+      AUTOGATUS_GATUS_CONFIG: /gatus-config
+    volumes: !override
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - gatus-generated:/output
+      - /work/gatus:/gatus-config:ro
+
+  sink:
+    image: python:3.12-slim
+    pull_policy: never
+    container_name: autogatus-itest-sink
+    labels:
+      autogatus.enable: "false"
+    command: ["python", "-u", "/sink.py"]
+    volumes:
+      - /src/test/integration/sink.py:/sink.py:ro
+    ports:
+      - "127.0.0.1:18081:8080"
+
+volumes:
+  gatus-data:
