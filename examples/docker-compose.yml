@@ -69,5 +69,14 @@ services:
     labels:
       autogatus.check.alive.exec: "pgrep -f cloudflare-ddns"   # exit 0 = healthy
 
+  # A service stopped on purpose. Label it, then park it with
+  #   docker compose up --no-start standby
+  # and autogatus keeps its Gatus endpoints and their history, frozen and silent.
+  # Remove the label and run docker compose up -d standby to bring it back.
+  # standby:
+  #   image: traefik/whoami
+  #   labels:
+  #     autogatus.offline: "true"
+
 volumes:
   gatus-generated:

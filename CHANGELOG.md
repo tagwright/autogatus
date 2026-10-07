@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+A way to say a container is stopped on purpose, declared on the service itself.
+
+- New label `autogatus.offline=true`. Put it on a service in its own compose file and park the service with `docker compose up --no-start <svc>`, which recreates the container without starting it. While the container is parked, its liveness and check endpoints stay declared in Gatus but are disabled, carry no alerts and get no pushes, so the rows keep their history, freeze on their last result and page nobody. Its checks do not run. Its `gatus.*` endpoints are still probed, with their alerts removed.
+- A parked container survives an autogatus restart with its history. It is declared even when autogatus never saw it running, so the restart no longer drops its endpoint and Gatus no longer deletes the history with it.
+- A labeled container that is running, restarting or paused is drift, and it pages. Its liveness endpoint gets its alerts back and a failing result that starts `drift: declared offline (autogatus.offline=true)` and keeps the real status, so a forgotten label cannot hide a later crash. A labeled container that has run since it was created, or whose start failed, is monitored normally, with a hint to re-park it with `docker compose up --no-start --force-recreate`.
+- An unrecognized value is ignored with a warning, so a typo keeps paging. With no `autogatus.offline` label anywhere, the generated config and the pushes are the same as before.
+
 ## v00.01.00b3
 
 Moved to the tagwright org. The image now lives at `ghcr.io/tagwright/autogatus`, and every commit is authored under the project identity. No functional changes from b2.

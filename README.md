@@ -73,7 +73,26 @@ autogatus sets a Gatus heartbeat on each endpoint. If autogatus stops pushing, t
 
 **Grouping.** A Compose project holds many logical stacks under one project name, so pass a `{service: stack}` map with `AUTOGATUS_STACK_MAP` to group endpoints by stack. Unmapped services fall back to the container name.
 
-**What gets monitored.** autogatus starts watching a container once it has seen it running, so a crash or a stop becomes a failure (the heartbeat backs this up). A one-shot that ran and exited before autogatus ever saw it is left alone, and a removed container drops off. Skip noise globally with `AUTOGATUS_EXCLUDE` (default `autogatus,claude-code`), or opt a single container out with the label `autogatus.enable=false`. Watch the polarity: `gatus.enable=true` opts a container *into* tier-1 probed endpoints, `autogatus.enable=false` opts it *out* of tier-2 auto monitoring. A container you opt out can still declare `autogatus.check.<id>.*` checks, since those are a separate, deliberate opt-in and keep running.
+**What gets monitored.** autogatus starts watching a container once it has seen it running, so a crash or a stop becomes a failure (the heartbeat backs this up). A one-shot that ran and exited before autogatus ever saw it is left alone, and a removed container drops off. A container labeled `autogatus.offline=true` is always declared, even one autogatus never saw running (see Stopped on purpose below). Skip noise globally with `AUTOGATUS_EXCLUDE` (default `autogatus,claude-code`), or opt a single container out with the label `autogatus.enable=false`. Watch the polarity: `gatus.enable=true` opts a container *into* tier-1 probed endpoints, `autogatus.enable=false` opts it *out* of tier-2 auto monitoring. A container you opt out can still declare `autogatus.check.<id>.*` checks, since those are a separate, deliberate opt-in and keep running.
+
+**Stopped on purpose.** A stop is a failure, so stopping a service on purpose pages like a crash would. To say the stop is intended, label the service in its own compose file and park it:
+
+```yaml
+services:
+  gameserver:
+    labels:
+      autogatus.offline: "true"
+```
+
+```
+docker compose up --no-start gameserver
+```
+
+`up --no-start` recreates the container with the label and does not start it. autogatus calls that container parked, meaning it carries the label and has never been started since it was created. While it is parked, its endpoints freeze. The liveness endpoint and any `autogatus.check.<id>` checks stay declared, so Gatus keeps their history, but they are declared disabled and with no alerts, and autogatus pushes nothing to them and does not run the checks. Gatus shows no new results for them, sends no alerts for them, and runs no heartbeat check on them. The container's `gatus.*` endpoints are not disabled. Gatus keeps probing them and records the failures, but their alerts are removed, so nothing pages. The liveness row sits on whatever its last result was, which can be green if you parked a running container, right next to `gatus.*` rows that are red. A parked container keeps its endpoints and their history across an autogatus restart.
+
+To bring the service back, remove the label and run `docker compose up -d gameserver`. The container is recreated and started, and on the next cycle its endpoints are enabled with their alerts again. If the container runs while it still carries the label, autogatus calls that drift and pages, so a forgotten label cannot hide a later crash. That happens after `docker compose up -d gameserver` with the label still set, and after a whole-project `docker compose up -d`, which starts every parked service in the project. The liveness endpoint gets its alerts back and a failing result that starts `drift: declared offline (autogatus.offline=true) but the container is running`, followed by the real status. To re-park after drift, run `docker compose up --no-start --force-recreate gameserver`. Plain `up --no-start` leaves an existing container alone when its config has not changed, so re-parking needs the recreate. A labeled container that has run since it was created, or whose start failed, is not parked. It is monitored normally, and its failure text ends with a hint to re-park it that way. `docker compose down` removes a parked container like any other, and Gatus then drops its endpoints and their history.
+
+Drift shows on the liveness endpoint only. A live container's checks run and alert as usual. `autogatus.snooze` and `autogatus.alerts=none` govern the drift alert the same as any other alert from that container, and snooze is not consulted while a container is parked, since it has no uptime and no alerts to hold back. `autogatus.enable=false` and `AUTOGATUS_EXCLUDE` still mean no liveness endpoint. While such a container is parked, the label still freezes its checks and quiets its `gatus.*` endpoints, and drift on it shows as a WARN line in autogatus's log, since there is no endpoint to show it on. Gatus applies each change at its next config check, so a drift page arrives after that reload plus the provider's failure threshold. Parking removes the alerts block, so Gatus forgets an alert that had already fired on that endpoint. It never sends the resolved message for it, and the alerts come back untriggered when the container is unparked. The label takes `true`, `1`, `yes` or `on`, and `false`, `0`, `no`, `off` or empty mean not offline. Any other value is ignored with a warning, so a typo keeps paging.
 
 **Thresholds.** Memory pressure and restart loops fail by default, since both mean the container is about to fall over. CPU is reported but never fails on its own unless you set `AUTOGATUS_CPU_THRESHOLD`. A container can run hot for a while without being broken.
 
@@ -118,6 +137,8 @@ A provider only fires if it is configured in Gatus's own `alerting:` section. au
 
 A label naming a provider outside the allowlist is dropped and logged at WARN, with the endpoint and provider named.
 
+A parked container (see Stopped on purpose) has no alerts anywhere. Its liveness and check endpoints are declared without an alerts block, and its `gatus.*` endpoints have theirs removed. Drift on a labeled container pages through the container's normal routing.
+
 ## Checks
 
 Gatus probes from where it runs, so it cannot see a headless container with no HTTP endpoint, or one on a network it cannot reach. autogatus is already on the Docker socket, so it can run the check itself and push the result as an external endpoint. This is the ask in Gatus issue [#647](https://github.com/TwiN/gatus/issues/647): monitoring something like `cloudflare-ddns` that serves no port, without Gatus needing shell support. Checks need container monitoring on (`AUTOGATUS_MONITOR_CONTAINERS=true`).
@@ -156,6 +177,8 @@ A TCP check against a service on a network autogatus shares:
 Exec runs commands inside your containers, and a `:ro` socket mount does not stop it, because the exec API ignores the mount flag. So exec stays off until you turn it on in two places: the per-container label and a global `AUTOGATUS_ENABLE_EXEC=true` (default off). With the global flag off, exec labels are ignored and logged once, while tcp checks keep working. Turn it on only if you trust the labels on your containers.
 
 A tcp check dials from autogatus's own network position, so autogatus has to share a Docker network with the target. Exec has no such constraint, since it goes over the Docker API rather than the network.
+
+A check on a parked container (see Stopped on purpose) does not run. It stays declared, disabled and with no alerts, and nothing is pushed to it. It runs on the first cycle after the container stops being parked. This holds when the container is excluded or opted out with `autogatus.enable=false` too.
 
 ## Configuration
 
